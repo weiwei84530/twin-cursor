@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "interception-python"
+version = "1.13.5"
+authors = [
+  { name="Kenny Hommel", email="kennyhommel36@gmail.com" },
+]
+description = "A python port of interception, which hooks into the input event handling mechanisms to simulate inputs without injected flags"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/kennyhml/pyinterception"
+"Bug Tracker" = "https://github.com/kennyhml/pyinterception/issues"

@@ -37,10 +37,19 @@ SM_CYVIRTUALSCREEN = 79
 SM_XVIRTUALSCREEN = 76
 SM_YVIRTUALSCREEN = 77
 
-# File paths
-CURSOR_IMAGE_PATH = "cursor.png"
-
 # Utility functions
+def resource_path(relative_path):
+    # Resolve bundled resources both in source runs and in a frozen EXE:
+    # PyInstaller extracts data files to sys._MEIPASS instead of the script dir
+    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
+
+
+# File paths
+CURSOR_IMAGE_PATH = resource_path("cursor.png")
+ICON_IMAGE_PATH = resource_path("icon.png")
+
+
 def log(*args, **kwargs):
     # Debug logging function
     if debug_mode:
@@ -207,8 +216,7 @@ class MultiMouseMonitor:
 
     def create_tray_icon(self):
         def create_icon():
-            icon_path = "icon.png"
-            icon = Image.open(icon_path).convert('RGBA')
+            icon = Image.open(ICON_IMAGE_PATH).convert('RGBA')
             return icon
 
         def on_exit(icon, item):

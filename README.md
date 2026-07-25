@@ -9,7 +9,7 @@ TwinCursor lets two physical mice share one PC while each keeps its own cursor p
 - Windows
 - Two physical mice (the app exits if fewer than two are detected)
 - [Interception](https://github.com/oblitum/Interception) kernel driver installed
-- Python 3
+- [uv](https://docs.astral.sh/uv/)
 
 ## Deployment
 
@@ -17,12 +17,18 @@ TwinCursor lets two physical mice share one PC while each keeps its own cursor p
 
 1. Install the [Interception](https://github.com/oblitum/Interception) driver and reboot.
 2. Connect two mice.
-3. Run `run_application.bat` — it installs the Python dependencies from `requirements.txt` if needed, then starts the app silently in the background (`pythonw.exe`).
-
-To run with verbose logging instead:
+3. Run the app:
 
 ```
-python cursor.py --debug
+uv run cursor.py
+```
+
+On first run, uv automatically creates a virtual environment and installs the locked dependencies before starting the app.
+
+To run with verbose logging:
+
+```
+uv run cursor.py --debug
 ```
 
 ## Usage

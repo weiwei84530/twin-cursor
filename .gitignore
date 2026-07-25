@@ -1,3 +1,9 @@
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+# Virtual environment
+.venv/
+
+# Build artifacts from uv building the vendored interception package
+interception_python-1.13.5/build/

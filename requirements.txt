@@ -1,4 +1,0 @@
-Pillow==10.2.0
-pywin32==306
-pygame==2.6.1
-pystray==0.19.5 

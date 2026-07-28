@@ -1,13 +1,12 @@
 [project]
 name = "twincursor"
-version = "0.1.0"
+version = "1.0.0"
 description = "A dual-mouse, dual-cursor tool for Windows, designed for ambidextrous users"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "pillow>=10.2.0",
     "pywin32>=308",
-    "pygame>=2.6.1",
     "pystray>=0.19.5",
     "interception-python",
 ]

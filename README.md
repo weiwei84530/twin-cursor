@@ -2,12 +2,14 @@
 
 A dual-mouse, dual-cursor tool for Windows, designed for ambidextrous users.
 
-TwinCursor lets two physical mice share one PC while each keeps its own cursor position. When you switch to the other mouse, the OS cursor jumps back to where that mouse left off, and a second cursor icon is drawn on a transparent full-screen overlay. A system tray menu provides a per-mouse "Mirror Buttons" toggle that swaps the left and right buttons.
+TwinCursor lets two physical mice share one PC while each keeps its own cursor position. When you switch to the other mouse, the OS cursor jumps back to where that mouse left off, and a ghost cursor marks the idle mouse's position. While one mouse is dragging or actively moving, the other mouse moves its own ghost cursor instead of taking over (its clicks are ignored); control switches as soon as the first mouse pauses. A settings window provides a per-mouse "Mirror Buttons" toggle that swaps the left and right buttons.
+
+The ghost cursor uses your actual system cursor (theme, pointer size and per-monitor DPI scaling are respected), drawn on a tiny per-pixel-alpha layered window.
 
 ## Requirements
 
-- Windows
-- Two physical mice (the app exits if fewer than two are detected)
+- Windows 10 or later
+- Two physical mice (the app waits up to 30 seconds for them at startup)
 - [Interception](https://github.com/oblitum/Interception) kernel driver installed
 - [uv](https://docs.astral.sh/uv/)
 
@@ -20,7 +22,7 @@ TwinCursor lets two physical mice share one PC while each keeps its own cursor p
 3. Run the app:
 
 ```
-uv run cursor.py
+uv run -m twincursor
 ```
 
 On first run, uv automatically creates a virtual environment and installs the locked dependencies before starting the app.
@@ -28,11 +30,23 @@ On first run, uv automatically creates a virtual environment and installs the lo
 To run with verbose logging:
 
 ```
-uv run cursor.py --debug
+uv run -m twincursor --debug
 ```
 
 ## Usage
 
-- The app lives in the system tray. Use **Options → Mouse A / Mouse B → Mirror Buttons** to swap the left/right buttons of a mouse.
-- Mirror settings are stored in the registry under `HKCU\SOFTWARE\TwinCursor`.
-- Use **Exit** in the tray menu to quit.
+- The app lives in the system tray. Left-click the tray icon (or right-click → **Open Settings**) to open the settings window.
+- In the settings window, toggle **Mirror buttons** per mouse to swap its left/right buttons. Settings are stored in the registry under `HKCU\SOFTWARE\TwinCursor`, keyed by mouse hardware ID.
+- Right-click the tray icon → **Exit** to quit.
+- Only one instance can run at a time; a second launch exits immediately.
+
+## Project structure
+
+- `twincursor/__main__.py` — entry point: DPI awareness, single-instance guard, startup, shutdown
+- `twincursor/router.py` — Interception event loop and stroke routing (the input hot path)
+- `twincursor/overlay.py` — ghost-cursor layered window
+- `twincursor/settings_ui.py` — settings window (tkinter)
+- `twincursor/tray.py` — system tray icon
+- `twincursor/settings.py` — registry persistence
+- `twincursor/winapi.py` — ctypes Win32 definitions
+- `interception_python-1.13.5/` — vendored third-party library (do not modify)

@@ -6,8 +6,8 @@ Produces a single-file windowed executable at dist/TwinCursor-v<version>.exe.
 """
 
 import os
-import re
 import sys
+import tomllib
 
 from PIL import Image
 
@@ -29,13 +29,12 @@ if os.path.isdir(_tcl_root):
 BUILD_DIR = os.path.join(SPECPATH, "build")
 os.makedirs(BUILD_DIR, exist_ok=True)
 
-# The EXE name carries the release version. Read it straight out of the
-# package source rather than importing twincursor, which would depend on
-# the spec process picking up SPECPATH from sys.path.
-with open(
-    os.path.join(SPECPATH, "twincursor", "__init__.py"), encoding="utf-8"
-) as f:
-    VERSION = re.search(r'^__version__ = "(.+)"$', f.read(), re.MULTILINE).group(1)
+# The EXE name carries the release version. pyproject.toml is its single
+# source: uv insists on a static project.version (a virtual project has no
+# build backend that could resolve a dynamic one), so a second copy in the
+# package would only be something to forget to bump.
+with open(os.path.join(SPECPATH, "pyproject.toml"), "rb") as f:
+    VERSION = tomllib.load(f)["project"]["version"]
 
 # twincursor/__main__.py cannot be handed to PyInstaller directly: run as a
 # top-level script its relative imports lose their package context. Use a

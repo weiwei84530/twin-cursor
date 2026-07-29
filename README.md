@@ -49,7 +49,7 @@ uv run -m twincursor --debug
 uv run pyinstaller TwinCursor.spec
 ```
 
-The single-file executable is written to `dist/`, with the package version in its name — `dist/TwinCursor-v1.1.0.exe` for the current source tree.
+The single-file executable is written to `dist/`, with the package version in its name — `dist/TwinCursor-v1.1.0.exe` for the current source tree. That version comes from `project.version` in `pyproject.toml`, which is the only place it needs to be bumped.
 
 ## Usage
 

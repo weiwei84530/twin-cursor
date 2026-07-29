@@ -3,8 +3,6 @@
 import os
 import sys
 
-__version__ = "1.1.0"
-
 
 def resource_path(name: str) -> str:
     """Resolve a bundled asset both in source runs and in a frozen EXE.

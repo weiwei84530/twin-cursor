@@ -1,9 +1,22 @@
 """Input routing: the hot path between the Interception driver and Windows.
 
-Every stroke of the two tracked mice is filtered by the driver and must be
-re-sent by this loop, so the handler does as little work as possible and
-forwards immediately. Anything slow (drawing, registry writes, tray/UI) is
-kept on other threads.
+The router runs in one of two modes, switchable at runtime from the
+settings UI:
+
+- Dual-mouse mode (two devices assigned): every stroke of both mice is
+  filtered by the driver and re-sent by this loop, so the handler does as
+  little work as possible and forwards immediately. Anything slow (drawing,
+  registry writes, tray/UI) is kept on other threads.
+- Single-mouse / idle mode (one or zero devices assigned): no driver
+  filters are set on the assigned mouse, so its input flows through Windows
+  untouched with no real-time processing at all. Button mirroring is done
+  with the standard SwapMouseButton API instead, and the ghost overlay is
+  hidden.
+
+In both modes, mice that are present but not assigned to a slot are
+blocked: their strokes are filtered and swallowed, so setting a slot to
+"None" actually disables the leftover mouse instead of letting it drive
+the cursor alongside the assigned one.
 """
 
 import logging
@@ -17,6 +30,7 @@ from interception.constants import (
     MouseFlag,
 )
 
+from . import settings
 from . import winapi as w
 
 log = logging.getLogger(__name__)
@@ -71,14 +85,15 @@ _SPEED_MULTIPLIERS = {
 
 
 class MouseDevice:
-    """State of one tracked physical mouse."""
+    """State of one physical mouse known to the app (assigned to a slot or not)."""
 
-    def __init__(self, device_num: int, hwid: str, name: str, settings_key: str):
+    def __init__(self, device_num: int, hwid: str, settings_key: str, label: str):
         self.device_num = device_num
         self.hwid = hwid
-        self.name = name
         self.settings_key = settings_key
+        self.label = label
         self.is_mirrored = False
+        self.hotkey = settings.HOTKEY_UNSET  # dict, None (disabled) or unset
         # Remembered cursor position; authoritative only while inactive.
         # Kept as floats so slow ghost movements can accumulate fractions.
         self.x = 0.0
@@ -86,16 +101,57 @@ class MouseDevice:
         self.buttons_down: set[str] = set()
 
 
-def connect(timeout: float = 30.0, interval: float = 1.0):
-    """Create the Interception context and find two connected mice.
+def enumerate_mice(interception) -> list[tuple[int, str]]:
+    """Return (device_num, hardware_id) for every present mouse device.
 
-    Devices are identified by hardware ID (a populated HWID means a device
-    is actually present in that slot). Retries for a while because at logon
-    the driver may not have enumerated the devices yet.
+    A populated HWID means a device is actually present in that slot. The
+    driver returns a NUL-separated list of hardware IDs; the first entry is
+    the most specific one.
+    """
+    found: list[tuple[int, str]] = []
+    for num, device in enumerate(interception.devices):
+        if not Interception.is_mouse(num):
+            continue
+        try:
+            hwid = device.get_HWID()
+        except OSError:
+            hwid = None
+        if hwid:
+            found.append((num, hwid.split("\x00", 1)[0].strip()))
+    return found
 
-    Returns (interception, mice) where mice maps device number to MouseDevice.
-    Raises RuntimeError when the driver is missing or fewer than two mice are
-    found within the timeout.
+
+def assign_keys(found) -> list[tuple[str, int, str]]:
+    """Give each (device_num, hwid) a unique settings key.
+
+    Two identical mice share a HWID; later duplicates get a #2/#3 suffix in
+    enumeration order.
+    """
+    result = []
+    used: set[str] = set()
+    for num, hwid in found:
+        key, n = hwid, 2
+        while key in used:
+            key = f"{hwid}#{n}"
+            n += 1
+        used.add(key)
+        result.append((key, num, hwid))
+    return result
+
+
+def connect(wanted_keys=(), timeout: float = 30.0, interval: float = 1.0,
+            settle: float = 3.0):
+    """Create the Interception context and enumerate connected mice.
+
+    Waits up to `timeout` for the first mouse, because at logon the driver
+    may not have enumerated the devices yet. Once at least one mouse is
+    present, it keeps polling a little longer: until every key in
+    `wanted_keys` (the stored device selection) is present, or — with no
+    stored selection — up to `settle` seconds for a second mouse, so a
+    dual-mouse setup coming up at logon is not misdetected as single-mouse.
+
+    Returns (interception, found) where found is [(device_num, hwid)].
+    Raises RuntimeError when the driver is missing or no mouse shows up.
     """
     try:
         interception = Interception()
@@ -105,87 +161,95 @@ def connect(timeout: float = 30.0, interval: float = 1.0):
             "(https://github.com/oblitum/Interception)"
         ) from exc
 
+    wanted = [key for key in wanted_keys if isinstance(key, str)]
     deadline = time.monotonic() + timeout
+    settle_deadline = None
     while True:
-        found: list[tuple[int, str]] = []
-        for num, device in enumerate(interception.devices):
-            if not Interception.is_mouse(num):
-                continue
-            try:
-                hwid = device.get_HWID()
-            except OSError:
-                hwid = None
-            if hwid:
-                # The driver returns a NUL-separated list of hardware IDs;
-                # the first entry is the most specific one.
-                found.append((num, hwid.split("\x00", 1)[0].strip()))
-
-        if len(found) >= 2:
-            break
-        if time.monotonic() >= deadline:
+        found = enumerate_mice(interception)
+        now = time.monotonic()
+        if found:
+            keys = {key for key, _, _ in assign_keys(found)}
+            complete = (
+                all(key in keys for key in wanted) if wanted else len(found) >= 2
+            )
+            if complete:
+                return interception, found
+            if settle_deadline is None:
+                settle_deadline = now + settle
+            if now >= settle_deadline or now >= deadline:
+                return interception, found
+        elif now >= deadline:
             interception.destroy()
             raise RuntimeError(
-                f"Found {len(found)} mouse device(s), but two are required. "
-                "Please connect two mice."
+                "No mouse device found. Please connect a mouse."
             )
         log.debug("Waiting for mice: %d found so far", len(found))
         time.sleep(interval)
 
-    for num, hwid in found:
-        log.debug("Mouse device %d: %s", num, hwid)
-
-    mice: dict[int, MouseDevice] = {}
-    used_keys: set[str] = set()
-    for index, (num, hwid) in enumerate(found[:2]):
-        # Two identical mice share a HWID; disambiguate the settings key.
-        key = hwid if hwid not in used_keys else f"{hwid}#2"
-        used_keys.add(key)
-        name = f"Mouse {chr(65 + index)}"
-        mice[num] = MouseDevice(num, hwid, name, key)
-        log.info("Using %s: device %d (%s)", name, num, hwid)
-    return interception, mice
-
 
 class Router:
-    """Routes strokes between the two mice, the OS cursor and the overlay."""
+    """Routes strokes between the assigned mice, the OS cursor and the overlay."""
 
-    def __init__(self, interception: Interception, mice: dict[int, MouseDevice], overlay):
+    def __init__(self, interception, overlay):
         self._interception = interception
-        self._mice = mice
         self._overlay = overlay
-        self._active = next(iter(mice.values()))
+        self._mice: dict[int, MouseDevice] = {}  # routed devices (dual mode)
+        self._blocked: dict[int, MouseDevice] = {}  # present but unassigned
+        self._active: MouseDevice | None = None
+        self._single: MouseDevice | None = None  # the device in single mode
         self._speed_factor = _SPEED_MULTIPLIERS.get(w.get_mouse_speed(), 1.0)
         self._last_active_time = 0.0
+        # Control-path requests from other threads, applied on the router
+        # thread between strokes.
+        self._control_lock = threading.Lock()
+        self._pending: tuple[list, list] | None = None
+        self._refresh_cb = None
+        # The user's own system-wide swap setting (left-handed users);
+        # single-mode mirroring toggles relative to it.
+        self._baseline_swap = bool(w.user32.GetSystemMetrics(w.SM_SWAPBUTTON))
 
-        x, y = w.get_cursor_pos()
-        for mouse in mice.values():
-            mouse.x, mouse.y = float(x), float(y)
+    # -- public API (any thread) ------------------------------------------
 
-    @property
-    def inactive_position(self) -> tuple[int, int]:
-        for mouse in self._mice.values():
-            if mouse is not self._active:
-                return int(mouse.x), int(mouse.y)
-        return w.get_cursor_pos()
+    def configure(self, devices, blocked=()) -> None:
+        """Request routing of `devices` (0-2) and blocking of `blocked`
+        (present but unassigned mice); applied on the router thread within
+        one loop iteration."""
+        with self._control_lock:
+            self._pending = (list(devices), list(blocked))
+
+    def request_refresh(self, callback) -> None:
+        """Ask the router thread to re-enumerate mice; callback(found) runs
+        on the router thread with the enumerate_mice result."""
+        with self._control_lock:
+            self._refresh_cb = callback
 
     def set_mirrored(self, mouse: MouseDevice, value: bool) -> None:
-        """Called from the settings UI thread; a bool flip is race-free."""
-        mouse.is_mirrored = value
-        log.info("%s button mirror: %s", mouse.name, "on" if value else "off")
+        """Called from the settings-UI/hotkey threads; a bool flip is race-free."""
+        with self._control_lock:
+            mouse.is_mirrored = value
+            if mouse is self._single:
+                w.user32.SwapMouseButton(self._baseline_swap != value)
+        log.info("%s button mirror: %s", mouse.label, "on" if value else "off")
+
+    def restore_system_swap(self) -> None:
+        """Put the system-wide button swap back the way we found it."""
+        w.user32.SwapMouseButton(self._baseline_swap)
 
     def run(self, stop: threading.Event) -> None:
         """Process strokes until the stop event is set. Runs on the caller."""
         interception = self._interception
-        for mouse in self._mice.values():
-            interception.devices[mouse.device_num].set_filter(_MOUSE_FILTER)
         try:
             while not stop.is_set():
+                if self._pending is not None or self._refresh_cb is not None:
+                    self._apply_control_requests()
                 device_num = interception.await_input(500)
                 if device_num is None:
                     continue
                 stroke = interception.devices[device_num].receive()
                 if stroke is None:
                     continue
+                if device_num in self._blocked and isinstance(stroke, MouseStroke):
+                    continue  # unassigned mice are disabled entirely
                 if device_num not in self._mice or not isinstance(stroke, MouseStroke):
                     # Never swallow input we do not manage.
                     interception.send(device_num, stroke)
@@ -197,10 +261,77 @@ class Router:
                     log.exception("Error handling stroke, forwarding as-is")
                     interception.send(device_num, stroke)
         finally:
-            for mouse in self._mice.values():
+            for mouse in (*self._mice.values(), *self._blocked.values()):
                 interception.devices[mouse.device_num].set_filter(
                     FilterMouseButtonFlag.FILTER_MOUSE_NONE
                 )
+
+    # -- control path (router thread) ---------------------------------------
+
+    def _apply_control_requests(self) -> None:
+        with self._control_lock:
+            pending, self._pending = self._pending, None
+            refresh_cb, self._refresh_cb = self._refresh_cb, None
+        if refresh_cb is not None:
+            try:
+                refresh_cb(enumerate_mice(self._interception))
+            except Exception:
+                log.exception("Device refresh failed")
+            # The callback may have queued a fresh configuration.
+            with self._control_lock:
+                if self._pending is not None:
+                    pending, self._pending = self._pending, None
+        if pending is not None:
+            self._apply_assignment(*pending)
+
+    def _apply_assignment(self, devices: list[MouseDevice],
+                          blocked: list[MouseDevice]) -> None:
+        for mouse in (*self._mice.values(), *self._blocked.values()):
+            self._interception.devices[mouse.device_num].set_filter(
+                FilterMouseButtonFlag.FILTER_MOUSE_NONE
+            )
+        self._mice = {}
+        self._active = None
+        with self._control_lock:
+            self._single = None
+
+        self._blocked = {mouse.device_num: mouse for mouse in blocked}
+        for mouse in blocked:
+            self._interception.devices[mouse.device_num].set_filter(_MOUSE_FILTER)
+            log.info("Blocking unassigned mouse: %s", mouse.label)
+
+        if len(devices) == 2:
+            w.user32.SwapMouseButton(self._baseline_swap)
+            x, y = w.get_cursor_pos()
+            for mouse in devices:
+                mouse.x, mouse.y = float(x), float(y)
+                mouse.buttons_down.clear()
+                self._interception.devices[mouse.device_num].set_filter(
+                    _MOUSE_FILTER
+                )
+            self._mice = {mouse.device_num: mouse for mouse in devices}
+            self._active = devices[0]
+            self._speed_factor = _SPEED_MULTIPLIERS.get(w.get_mouse_speed(), 1.0)
+            self._last_active_time = 0.0
+            self._overlay.show_at(x, y)
+            log.info(
+                "Dual-mouse mode: %s + %s", devices[0].label, devices[1].label
+            )
+        else:
+            self._overlay.hide()
+            single = devices[0] if devices else None
+            with self._control_lock:
+                self._single = single
+            w.user32.SwapMouseButton(
+                self._baseline_swap != (single.is_mirrored if single else False)
+            )
+            if single is not None:
+                log.info(
+                    "Single-mouse mode: %s (input passes through untouched)",
+                    single.label,
+                )
+            else:
+                log.info("Idle mode: no mouse assigned")
 
     # -- stroke handling (hot path) ----------------------------------------
 
@@ -230,7 +361,7 @@ class Router:
             if log.isEnabledFor(logging.DEBUG):
                 log.debug(
                     "%s buttons=%#x data=%d held=%s",
-                    mouse.name, stroke.button_flags, stroke.button_data,
+                    mouse.label, stroke.button_flags, stroke.button_data,
                     mouse.buttons_down,
                 )
 
@@ -262,7 +393,7 @@ class Router:
         self._overlay.move_to(int(previous.x), int(previous.y))
         self._speed_factor = _SPEED_MULTIPLIERS.get(w.get_mouse_speed(), 1.0)
         log.debug(
-            "Switched to %s at (%d, %d)", mouse.name, int(mouse.x), int(mouse.y)
+            "Switched to %s at (%d, %d)", mouse.label, int(mouse.x), int(mouse.y)
         )
 
     def _ghost_move(self, mouse: MouseDevice, stroke: MouseStroke) -> None:

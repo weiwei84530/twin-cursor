@@ -25,6 +25,8 @@ log = logging.getLogger(__name__)
 _CLASS_NAME = "TwinCursorOverlay"
 _WM_APP_MOVE = w.WM_APP + 1
 _WM_APP_QUIT = w.WM_APP + 2
+_WM_APP_SHOW = w.WM_APP + 3
+_WM_APP_HIDE = w.WM_APP + 4
 
 _BASE_CURSOR_SIZE = 32  # pixels at 96 DPI when no CursorBaseSize is set
 
@@ -233,19 +235,30 @@ class Overlay:
         self._wndproc_ref = None  # keep the callback alive for the window's lifetime
         self._position = (0, 0)  # latest requested ghost position (hotspot point)
         self._move_pending = False
+        self._visible = False
         self._bitmaps: dict[int, _CursorBitmap] = {}
         self._current: _CursorBitmap | None = None
 
     # -- public API (any thread) ------------------------------------------
 
-    def start(self, x: int, y: int) -> None:
-        self._position = (x, y)
+    def start(self) -> None:
+        """Create the (hidden) overlay window and its message pump."""
         self._thread = threading.Thread(
             target=self._run, name="overlay", daemon=True
         )
         self._thread.start()
         if not self._ready.wait(timeout=10):
             raise RuntimeError("Overlay window failed to start")
+
+    def show_at(self, x: int, y: int) -> None:
+        """Show the ghost cursor at the given position."""
+        self._position = (x, y)
+        if self._hwnd:
+            w.user32.PostMessageW(self._hwnd, _WM_APP_SHOW, 0, 0)
+
+    def hide(self) -> None:
+        if self._hwnd:
+            w.user32.PostMessageW(self._hwnd, _WM_APP_HIDE, 0, 0)
 
     def move_to(self, x: int, y: int) -> None:
         """Move the ghost cursor. High-frequency calls are coalesced."""
@@ -270,8 +283,7 @@ class Overlay:
             self._ready.set()
             return
 
-        self._apply_position(force_repaint=True)
-        w.user32.ShowWindow(self._hwnd, w.SW_SHOWNOACTIVATE)
+        # The window stays hidden until show_at() is called (dual mode).
         self._ready.set()
 
         msg = wintypes.MSG()
@@ -314,6 +326,15 @@ class Overlay:
                 self._move_pending = False
                 self._apply_position()
                 return 0
+            if message == _WM_APP_SHOW:
+                self._visible = True
+                self._apply_position(force_repaint=True)
+                w.user32.ShowWindow(hwnd, w.SW_SHOWNOACTIVATE)
+                return 0
+            if message == _WM_APP_HIDE:
+                self._visible = False
+                w.user32.ShowWindow(hwnd, w.SW_HIDE)
+                return 0
             if message == _WM_APP_QUIT:
                 w.user32.DestroyWindow(hwnd)
                 return 0
@@ -322,7 +343,9 @@ class Overlay:
                 for bitmap in self._bitmaps.values():
                     bitmap.destroy()
                 self._bitmaps.clear()
-                self._apply_position(force_repaint=True)
+                self._current = None
+                if self._visible:
+                    self._apply_position(force_repaint=True)
                 return 0
             if message == w.WM_DESTROY:
                 w.user32.PostQuitMessage(0)

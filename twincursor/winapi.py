@@ -44,13 +44,27 @@ SWP_NOMOVE = 0x0002
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
 
+SW_HIDE = 0
 SW_SHOWNOACTIVATE = 4
 
 # Window messages
 WM_DESTROY = 0x0002
+WM_QUIT = 0x0012
 WM_SETTINGCHANGE = 0x001A
 WM_DISPLAYCHANGE = 0x007E
+WM_HOTKEY = 0x0312
+WM_USER = 0x0400
 WM_APP = 0x8000
+
+# PeekMessage
+PM_NOREMOVE = 0x0000
+
+# RegisterHotKey modifiers
+MOD_ALT = 0x0001
+MOD_CONTROL = 0x0002
+MOD_SHIFT = 0x0004
+MOD_WIN = 0x0008
+MOD_NOREPEAT = 0x4000
 
 # LoadImage
 IMAGE_CURSOR = 2
@@ -75,6 +89,9 @@ MONITOR_DEFAULTTONEAREST = 2
 
 # SystemParametersInfo
 SPI_GETMOUSESPEED = 0x0070
+
+# GetSystemMetrics
+SM_SWAPBUTTON = 23
 
 # Errors / misc
 ERROR_ALREADY_EXISTS = 183
@@ -244,6 +261,28 @@ user32.SystemParametersInfoW.argtypes = [
 ]
 user32.SystemParametersInfoW.restype = wintypes.BOOL
 
+user32.SwapMouseButton.argtypes = [wintypes.BOOL]
+user32.SwapMouseButton.restype = wintypes.BOOL
+
+user32.RegisterHotKey.argtypes = [
+    wintypes.HWND, ctypes.c_int, wintypes.UINT, wintypes.UINT
+]
+user32.RegisterHotKey.restype = wintypes.BOOL
+
+user32.UnregisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.UnregisterHotKey.restype = wintypes.BOOL
+
+user32.PeekMessageW.argtypes = [
+    ctypes.POINTER(wintypes.MSG), wintypes.HWND,
+    wintypes.UINT, wintypes.UINT, wintypes.UINT,
+]
+user32.PeekMessageW.restype = wintypes.BOOL
+
+user32.PostThreadMessageW.argtypes = [
+    wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
+]
+user32.PostThreadMessageW.restype = wintypes.BOOL
+
 gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
 gdi32.CreateCompatibleDC.restype = wintypes.HDC
 
@@ -281,6 +320,9 @@ kernel32.CreateMutexW.restype = wintypes.HANDLE
 kernel32.GetCurrentThread.argtypes = []
 kernel32.GetCurrentThread.restype = wintypes.HANDLE
 
+kernel32.GetCurrentThreadId.argtypes = []
+kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+
 kernel32.SetThreadPriority.argtypes = [wintypes.HANDLE, ctypes.c_int]
 kernel32.SetThreadPriority.restype = wintypes.BOOL
 
@@ -290,6 +332,96 @@ if shcore is not None:
         ctypes.POINTER(wintypes.UINT), ctypes.POINTER(wintypes.UINT),
     ]
     shcore.GetDpiForMonitor.restype = ctypes.c_long
+
+
+# --- SetupAPI (device names) --------------------------------------------
+
+try:
+    setupapi = ctypes.WinDLL("setupapi", use_last_error=True)
+    cfgmgr32 = ctypes.WinDLL("cfgmgr32", use_last_error=True)
+except OSError:
+    setupapi = None
+    cfgmgr32 = None
+
+INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+
+DIGCF_PRESENT = 0x00000002
+DIGCF_ALLCLASSES = 0x00000004
+
+SPDRP_DEVICEDESC = 0x00000000
+SPDRP_HARDWAREID = 0x00000001
+
+DEVPROP_TYPE_STRING = 0x00000012
+
+
+class GUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", wintypes.DWORD),
+        ("Data2", wintypes.WORD),
+        ("Data3", wintypes.WORD),
+        ("Data4", ctypes.c_ubyte * 8),
+    ]
+
+
+class SP_DEVINFO_DATA(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("ClassGuid", GUID),
+        ("DevInst", wintypes.DWORD),
+        ("Reserved", ctypes.c_size_t),
+    ]
+
+
+class DEVPROPKEY(ctypes.Structure):
+    _fields_ = [("fmtid", GUID), ("pid", wintypes.ULONG)]
+
+
+# The USB product string as reported by the device itself.
+DEVPKEY_Device_BusReportedDeviceDesc = DEVPROPKEY(
+    GUID(
+        0x540B947E, 0x8B40, 0x45BC,
+        (ctypes.c_ubyte * 8)(0xA8, 0xA2, 0x6A, 0x0B, 0x89, 0x4C, 0xBD, 0xA2),
+    ),
+    4,
+)
+
+if setupapi is not None:
+    setupapi.SetupDiGetClassDevsW.argtypes = [
+        ctypes.POINTER(GUID), wintypes.LPCWSTR, wintypes.HWND, wintypes.DWORD
+    ]
+    setupapi.SetupDiGetClassDevsW.restype = wintypes.HANDLE
+
+    setupapi.SetupDiEnumDeviceInfo.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(SP_DEVINFO_DATA)
+    ]
+    setupapi.SetupDiEnumDeviceInfo.restype = wintypes.BOOL
+
+    setupapi.SetupDiGetDeviceRegistryPropertyW.argtypes = [
+        wintypes.HANDLE, ctypes.POINTER(SP_DEVINFO_DATA), wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p, wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    setupapi.SetupDiGetDeviceRegistryPropertyW.restype = wintypes.BOOL
+
+    # Vista+; guarded like the other optional APIs.
+    try:
+        setupapi.SetupDiGetDevicePropertyW.argtypes = [
+            wintypes.HANDLE, ctypes.POINTER(SP_DEVINFO_DATA),
+            ctypes.POINTER(DEVPROPKEY), ctypes.POINTER(wintypes.ULONG),
+            ctypes.c_void_p, wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD), wintypes.DWORD,
+        ]
+        setupapi.SetupDiGetDevicePropertyW.restype = wintypes.BOOL
+    except AttributeError:
+        pass
+
+    setupapi.SetupDiDestroyDeviceInfoList.argtypes = [wintypes.HANDLE]
+    setupapi.SetupDiDestroyDeviceInfoList.restype = wintypes.BOOL
+
+    cfgmgr32.CM_Get_Parent.argtypes = [
+        ctypes.POINTER(wintypes.DWORD), wintypes.DWORD, ctypes.c_ulong
+    ]
+    cfgmgr32.CM_Get_Parent.restype = ctypes.c_ulong  # CONFIGRET, 0 = success
 
 
 # --- Small helpers ------------------------------------------------------

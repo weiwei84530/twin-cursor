@@ -23,7 +23,7 @@ The ghost cursor uses your actual system cursor (theme, pointer size and per-mon
 
 ## Installation
 
-1. Download `TwinCursor.exe` from the [latest release](https://github.com/weiwei84530/TwinCursor/releases/latest) and run it.
+1. Download the `TwinCursor-v<version>.exe` asset from the [latest release](https://github.com/weiwei84530/TwinCursor/releases/latest) and run it.
 2. If the Interception kernel driver is not installed yet, TwinCursor offers to install the bundled official installer (Windows asks for administrator approval). Restart the computer when prompted, then launch TwinCursor again.
 3. The app starts minimized to the system tray.
 
@@ -49,7 +49,7 @@ uv run -m twincursor --debug
 uv run pyinstaller TwinCursor.spec
 ```
 
-The single-file executable is written to `dist/TwinCursor.exe`.
+The single-file executable is written to `dist/`, with the package version in its name — `dist/TwinCursor-v1.1.0.exe` for the current source tree.
 
 ## Usage
 

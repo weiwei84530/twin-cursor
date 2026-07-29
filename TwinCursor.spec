@@ -2,10 +2,11 @@
 """PyInstaller build spec for TwinCursor.
 
 Build with: uv run pyinstaller TwinCursor.spec
-Produces a single-file windowed executable at dist/TwinCursor.exe.
+Produces a single-file windowed executable at dist/TwinCursor-v<version>.exe.
 """
 
 import os
+import re
 import sys
 
 from PIL import Image
@@ -27,6 +28,14 @@ if os.path.isdir(_tcl_root):
 
 BUILD_DIR = os.path.join(SPECPATH, "build")
 os.makedirs(BUILD_DIR, exist_ok=True)
+
+# The EXE name carries the release version. Read it straight out of the
+# package source rather than importing twincursor, which would depend on
+# the spec process picking up SPECPATH from sys.path.
+with open(
+    os.path.join(SPECPATH, "twincursor", "__init__.py"), encoding="utf-8"
+) as f:
+    VERSION = re.search(r'^__version__ = "(.+)"$', f.read(), re.MULTILINE).group(1)
 
 # twincursor/__main__.py cannot be handed to PyInstaller directly: run as a
 # top-level script its relative imports lose their package context. Use a
@@ -86,7 +95,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="TwinCursor",
+    name=f"TwinCursor-v{VERSION}",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

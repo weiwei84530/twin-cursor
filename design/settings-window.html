@@ -1,0 +1,208 @@
+<!-- @dsCard group="Windows" -->
+<!--
+  TwinCursor — Settings window mockup
+  ===================================
+  This is a faithful HTML replica of the current tkinter/ttk settings
+  window (twincursor/settings_ui.py). It exists so the design can be
+  iterated on in Claude Design and then translated BACK into ttk styles.
+
+  IMPORTANT FOR DESIGNERS: the real window is built with tkinter/ttk,
+  a native desktop toolkit with hard styling limits. Read the
+  companion card "ttk design constraints" (design/ttk-constraints.html)
+  before restyling anything. Rules of thumb:
+    - NO rounded corners, drop shadows, gradients, or animations.
+    - Only system-installed fonts (default: Segoe UI 9pt).
+    - Express changes as flat design tokens: colors, font sizes,
+      padding/spacing, border colors. Those translate 1:1 to ttk.
+  Every element below carries a comment naming its ttk widget and its
+  specific constraints.
+-->
+<title>TwinCursor settings window</title>
+<style>
+  /* Mimics Windows 11 default ttk ("vista" theme) rendering. */
+  :root {
+    --win-bg: #f0f0f0;        /* tk default window background */
+    --text: #000000;
+    --text-disabled: #6d6d6d;
+    --text-muted: #6e6e6e;    /* the gray hwid label */
+    --frame-border: #dcdcdc;  /* ttk.LabelFrame border */
+    --field-bg: #ffffff;      /* combobox field */
+    --field-border: #7a7a7a;
+    --btn-bg: #fdfdfd;        /* ttk.Button face */
+    --btn-border: #d0d0d0;
+    --btn-bg-hover: #e0eef9;
+    --btn-border-hover: #0078d4;
+    --accent: #0067c0;        /* checkbox check / focus */
+    --titlebar-bg: #f3f3f3;
+  }
+  body {
+    margin: 0;
+    display: flex;
+    justify-content: center;
+    padding: 24px;
+    background: #d9d9d9; /* desktop backdrop, not part of the window */
+    font-family: "Segoe UI", system-ui, sans-serif;
+    font-size: 12px; /* Segoe UI 9pt at 96 DPI */
+    color: var(--text);
+  }
+
+  /* The window frame. Fixed size, non-resizable in the real app. */
+  .window {
+    width: 400px;
+    background: var(--win-bg);
+    border: 1px solid #a0a0a0;
+    /* Real window corners are rounded by Windows 11 DWM, not by us. */
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); /* DWM shadow, not styleable */
+  }
+
+  /* Title bar: drawn by the OS. Only its background color can be
+     changed (DWMWA_CAPTION_COLOR, Windows 11+). Layout is fixed. */
+  .titlebar {
+    display: flex;
+    align-items: center;
+    height: 32px;
+    background: var(--titlebar-bg);
+    padding-left: 10px;
+    gap: 8px;
+    user-select: none;
+  }
+  .titlebar .app-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    background: linear-gradient(135deg, #4a9dec, #7b5bd6); /* icon.png stand-in */
+  }
+  .titlebar .title { flex: 1; font-size: 12px; }
+  .titlebar .caption-buttons { display: flex; height: 100%; }
+  .titlebar .caption-buttons span {
+    width: 46px;
+    display: grid;
+    place-items: center;
+    font-family: "Segoe MDL2 Assets", sans-serif;
+    font-size: 10px;
+    color: #444;
+  }
+  .titlebar .close:hover { background: #c42b1c; color: #fff; }
+
+  /* ttk.Frame(padding=12) */
+  .content { padding: 12px; }
+
+  /* ttk.LabelFrame(padding=(10, 6)) — a thin 1px border with the
+     title overlapping the border line. Border color and title font
+     are styleable; the overlap layout is fixed. */
+  .slot {
+    position: relative;
+    border: 1px solid var(--frame-border);
+    padding: 14px 10px 8px;
+    margin-top: 8px;
+  }
+  .slot:first-child { margin-top: 6px; }
+  .slot > .slot-title {
+    position: absolute;
+    top: -9px;
+    left: 8px;
+    background: var(--win-bg);
+    padding: 0 4px;
+  }
+
+  .row { display: flex; align-items: center; gap: 6px; }
+  .row + .row { margin-top: 8px; }
+
+  /* ttk.Combobox(state="readonly", width=36) — the closed field is
+     styleable (colors, border); the DROPDOWN LIST popup is a native
+     Windows control and is essentially NOT styleable. */
+  .combo {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--field-bg);
+    border: 1px solid var(--field-border);
+    padding: 2px 6px;
+    height: 20px;
+  }
+  .combo .arrow { color: #444; font-size: 9px; }
+
+  /* ttk.Checkbutton — the check glyph is drawn by the theme; its
+     size cannot change, only the accent color (via a custom theme). */
+  .check { display: inline-flex; align-items: center; gap: 6px; }
+  .check .box {
+    width: 13px;
+    height: 13px;
+    border: 1px solid var(--field-border);
+    background: var(--field-bg);
+    display: grid;
+    place-items: center;
+  }
+  .check.checked .box {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-size: 10px;
+  }
+
+  /* ttk.Button(width=24) — flat colors, 1px border, hover/pressed/
+     disabled states only. No radius, no shadow, no transition. */
+  .btn {
+    margin-left: auto;
+    min-width: 150px;
+    text-align: center;
+    background: var(--btn-bg);
+    border: 1px solid var(--btn-border);
+    padding: 3px 10px;
+  }
+  .btn:hover { background: var(--btn-bg-hover); border-color: var(--btn-border-hover); }
+
+  /* ttk.Label(foreground="gray") — the truncated hardware id. */
+  .hwid { margin-top: 6px; color: var(--text-muted); font-size: 11px; }
+
+  /* Disabled state (second slot when its device is "None"):
+     ttk grays the text; backgrounds mostly stay. */
+  .disabled { color: var(--text-disabled); }
+  .disabled .box, .disabled.btn { background: var(--win-bg); }
+</style>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="app-icon"></div>
+    <div class="title">TwinCursor</div>
+    <div class="caption-buttons">
+      <span>&#xE949;</span><span class="close">&#xE8BB;</span>
+    </div>
+  </div>
+
+  <div class="content">
+    <!-- Slot 0: always has a device; its dropdown has no "None" entry. -->
+    <div class="slot">
+      <span class="slot-title">First Mouse</span>
+      <div class="row">
+        <span>Device:</span>
+        <div class="combo"><span>Logitech USB Receiver</span><span class="arrow">&#9662;</span></div>
+      </div>
+      <div class="row">
+        <label class="check checked"><span class="box">&#10003;</span>Mirror buttons (swap left / right)</label>
+        <!-- Button doubles as the hotkey recorder: while recording its
+             text becomes "Press keys… (Esc = none)". Same widget, so
+             keep one geometry that fits both texts. -->
+        <div class="btn">Hotkey: Ctrl+Alt+M</div>
+      </div>
+      <div class="hwid">HID\VID_046D&amp;PID_C52B&amp;MI_00&amp;COL01\9&amp;2F5D…</div>
+    </div>
+
+    <!-- Slot 1: may be "None"; shown here in its disabled state. -->
+    <div class="slot">
+      <span class="slot-title">Second Mouse</span>
+      <div class="row">
+        <span>Device:</span>
+        <div class="combo"><span>None</span><span class="arrow">&#9662;</span></div>
+      </div>
+      <div class="row disabled">
+        <label class="check"><span class="box"></span>Mirror buttons (swap left / right)</label>
+        <div class="btn disabled">Hotkey: none</div>
+      </div>
+      <div class="hwid">No device assigned</div>
+    </div>
+  </div>
+</div>

@@ -6,8 +6,24 @@ Produces a single-file windowed executable at dist/TwinCursor.exe.
 """
 
 import os
+import sys
 
 from PIL import Image
+
+# uv virtual environments do not copy the Tcl runtime, so PyInstaller's
+# Tcl/Tk detection fails to initialize Tcl and excludes tkinter from the
+# bundle entirely ("tkinter installation is broken"). Point it at the base
+# interpreter's Tcl files, same as twincursor.settings_ui does at runtime.
+_tcl_root = os.path.join(sys.base_prefix, "tcl")
+if os.path.isdir(_tcl_root):
+    for _marker, _variable in (("init.tcl", "TCL_LIBRARY"), ("tk.tcl", "TK_LIBRARY")):
+        if os.environ.get(_variable):
+            continue
+        for _candidate in sorted(os.listdir(_tcl_root)):
+            _path = os.path.join(_tcl_root, _candidate)
+            if os.path.isfile(os.path.join(_path, _marker)):
+                os.environ[_variable] = _path
+                break
 
 BUILD_DIR = os.path.join(SPECPATH, "build")
 os.makedirs(BUILD_DIR, exist_ok=True)

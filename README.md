@@ -17,15 +17,15 @@ The ghost cursor uses your actual system cursor (theme, pointer size and per-mon
 - Windows 10 or later
 - One or two physical mice (the app waits up to 30 seconds for the first one at startup)
 - [Interception](https://github.com/oblitum/Interception) kernel driver installed
-- [uv](https://docs.astral.sh/uv/)
+- [uv](https://docs.astral.sh/uv/) (only when running or building from source)
 
-## Deployment
-
-> Note: the deployment process is subject to change and will be reworked.
+## Installation
 
 1. Install the [Interception](https://github.com/oblitum/Interception) driver and reboot.
 2. Connect your mice.
-3. Run the app:
+3. Download `TwinCursor.exe` from the [latest release](https://github.com/weiwei84530/TwinCursor/releases/latest) and run it. The app starts minimized to the system tray.
+
+### Running from source
 
 ```
 uv run -m twincursor
@@ -38,6 +38,14 @@ To run with verbose logging:
 ```
 uv run -m twincursor --debug
 ```
+
+### Building the standalone EXE
+
+```
+uv run pyinstaller TwinCursor.spec
+```
+
+The single-file executable is written to `dist/TwinCursor.exe`.
 
 ## Usage
 

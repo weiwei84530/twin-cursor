@@ -7,3 +7,7 @@ __pycache__/
 
 # Build artifacts from uv building the vendored interception package
 interception_python-1.13.5/build/
+
+# PyInstaller output
+build/
+dist/

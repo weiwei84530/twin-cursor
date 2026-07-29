@@ -13,3 +13,8 @@ dependencies = [
 
 [tool.uv.sources]
 interception-python = { path = "interception_python-1.13.5" }
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.21.0",
+]

@@ -59,6 +59,14 @@ a = Analysis(
         # resource_path() resolves these at the bundle root.
         (os.path.join(SPECPATH, "cursor.png"), "."),
         (os.path.join(SPECPATH, "icon.png"), "."),
+        # Official Interception driver installer, offered on first run
+        # when the driver is missing (see twincursor/driver_setup.py).
+        (
+            os.path.join(
+                SPECPATH, "interception_installer", "install-interception.exe"
+            ),
+            ".",
+        ),
     ],
     hiddenimports=[
         # pystray picks its backend at runtime.

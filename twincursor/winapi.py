@@ -11,6 +11,7 @@ from ctypes import wintypes
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+shell32 = ctypes.WinDLL("shell32", use_last_error=True)
 try:
     shcore = ctypes.WinDLL("shcore", use_last_error=True)
 except OSError:  # pre-Windows 8.1
@@ -96,6 +97,19 @@ SM_SWAPBUTTON = 23
 # Errors / misc
 ERROR_ALREADY_EXISTS = 183
 THREAD_PRIORITY_HIGHEST = 2
+INFINITE = 0xFFFFFFFF
+
+# MessageBox
+MB_OK = 0x00000000
+MB_YESNO = 0x00000004
+MB_ICONERROR = 0x00000010
+MB_ICONQUESTION = 0x00000020
+MB_ICONWARNING = 0x00000030
+MB_ICONINFORMATION = 0x00000040
+IDYES = 6
+
+# ShellExecuteEx
+SEE_MASK_NOCLOSEPROCESS = 0x00000040
 
 
 # --- Structures ---------------------------------------------------------
@@ -159,6 +173,26 @@ class WNDCLASSW(ctypes.Structure):
         ("hbrBackground", wintypes.HBRUSH),
         ("lpszMenuName", wintypes.LPCWSTR),
         ("lpszClassName", wintypes.LPCWSTR),
+    ]
+
+
+class SHELLEXECUTEINFOW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("fMask", wintypes.ULONG),
+        ("hwnd", wintypes.HWND),
+        ("lpVerb", wintypes.LPCWSTR),
+        ("lpFile", wintypes.LPCWSTR),
+        ("lpParameters", wintypes.LPCWSTR),
+        ("lpDirectory", wintypes.LPCWSTR),
+        ("nShow", ctypes.c_int),
+        ("hInstApp", wintypes.HINSTANCE),
+        ("lpIDList", wintypes.LPVOID),
+        ("lpClass", wintypes.LPCWSTR),
+        ("hkeyClass", wintypes.HKEY),
+        ("dwHotKey", wintypes.DWORD),
+        ("hIconOrMonitor", wintypes.HANDLE),
+        ("hProcess", wintypes.HANDLE),
     ]
 
 
@@ -325,6 +359,31 @@ kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 
 kernel32.SetThreadPriority.argtypes = [wintypes.HANDLE, ctypes.c_int]
 kernel32.SetThreadPriority.restype = wintypes.BOOL
+
+kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+kernel32.WaitForSingleObject.restype = wintypes.DWORD
+
+kernel32.GetExitCodeProcess.argtypes = [
+    wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)
+]
+kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+
+kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+kernel32.CloseHandle.restype = wintypes.BOOL
+
+user32.MessageBoxW.argtypes = [
+    wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT
+]
+user32.MessageBoxW.restype = ctypes.c_int
+
+shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(SHELLEXECUTEINFOW)]
+shell32.ShellExecuteExW.restype = wintypes.BOOL
+
+shell32.ShellExecuteW.argtypes = [
+    wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR,
+    wintypes.LPCWSTR, wintypes.LPCWSTR, ctypes.c_int,
+]
+shell32.ShellExecuteW.restype = wintypes.HINSTANCE
 
 if shcore is not None:
     shcore.GetDpiForMonitor.argtypes = [

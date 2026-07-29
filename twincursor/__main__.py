@@ -15,12 +15,15 @@ import logging
 import sys
 import threading
 
+from . import driver_setup
 from . import settings
 from . import winapi as w
 from .device_names import get_display_names
 from .hotkeys import HotkeyManager
 from .overlay import Overlay
-from .router import MouseDevice, Router, assign_keys, connect
+from .router import (
+    DriverUnavailableError, MouseDevice, Router, assign_keys, connect,
+)
 from .settings_ui import SettingsWindow
 from .tray import Tray
 
@@ -276,14 +279,27 @@ def main(argv=None) -> int:
     mutex = w.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
     if not mutex or ctypes.get_last_error() == w.ERROR_ALREADY_EXISTS:
         log.error("TwinCursor is already running.")
+        w.user32.MessageBoxW(
+            None,
+            "TwinCursor is already running — look for its icon in the"
+            " system tray.",
+            "TwinCursor", w.MB_OK | w.MB_ICONINFORMATION,
+        )
         return 1
 
     stored_selection = settings.load_selection() or {}
     wanted = [key for key in stored_selection.values() if isinstance(key, str)]
     try:
         interception, found = connect(wanted_keys=wanted)
+    except DriverUnavailableError as exc:
+        log.error("%s", exc)
+        driver_setup.handle_driver_failure()
+        return 1
     except RuntimeError as exc:
         log.error("%s", exc)
+        w.user32.MessageBoxW(
+            None, str(exc), "TwinCursor", w.MB_OK | w.MB_ICONERROR
+        )
         return 1
 
     overlay = Overlay()

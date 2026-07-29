@@ -35,6 +35,11 @@ from . import winapi as w
 
 log = logging.getLogger(__name__)
 
+
+class DriverUnavailableError(RuntimeError):
+    """The Interception driver could not be opened (missing or inactive)."""
+
+
 _MOUSE_FILTER = (
     FilterMouseButtonFlag.FILTER_MOUSE_ALL | FilterMouseButtonFlag.FILTER_MOUSE_MOVE
 )
@@ -156,7 +161,7 @@ def connect(wanted_keys=(), timeout: float = 30.0, interval: float = 1.0,
     try:
         interception = Interception()
     except Exception as exc:
-        raise RuntimeError(
+        raise DriverUnavailableError(
             "Could not open the Interception driver. Is it installed? "
             "(https://github.com/oblitum/Interception)"
         ) from exc

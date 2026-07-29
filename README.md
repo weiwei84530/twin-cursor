@@ -16,14 +16,16 @@ The ghost cursor uses your actual system cursor (theme, pointer size and per-mon
 
 - Windows 10 or later
 - One or two physical mice (the app waits up to 30 seconds for the first one at startup)
-- [Interception](https://github.com/oblitum/Interception) kernel driver installed
+- [Interception](https://github.com/oblitum/Interception) kernel driver (TwinCursor offers to install it on first run)
 - [uv](https://docs.astral.sh/uv/) (only when running or building from source)
 
 ## Installation
 
-1. Install the [Interception](https://github.com/oblitum/Interception) driver and reboot.
-2. Connect your mice.
-3. Download `TwinCursor.exe` from the [latest release](https://github.com/weiwei84530/TwinCursor/releases/latest) and run it. The app starts minimized to the system tray.
+1. Download `TwinCursor.exe` from the [latest release](https://github.com/weiwei84530/TwinCursor/releases/latest) and run it.
+2. If the Interception kernel driver is not installed yet, TwinCursor offers to install the bundled official installer (Windows asks for administrator approval). Restart the computer when prompted, then launch TwinCursor again.
+3. The app starts minimized to the system tray.
+
+The driver can also be installed manually: download [Interception](https://github.com/oblitum/Interception/releases/latest), run `install-interception.exe /install` from an administrator command prompt and reboot.
 
 ### Running from source
 
@@ -65,7 +67,9 @@ The single-file executable is written to `dist/TwinCursor.exe`.
 - `twincursor/settings_ui.py` — settings window (tkinter)
 - `twincursor/tray.py` — system tray icon
 - `twincursor/hotkeys.py` — global hotkeys (RegisterHotKey message loop)
+- `twincursor/driver_setup.py` — first-run Interception driver installation flow
 - `twincursor/device_names.py` — human-readable device names via SetupAPI
 - `twincursor/settings.py` — registry persistence
 - `twincursor/winapi.py` — ctypes Win32 definitions
 - `interception_python-1.13.5/` — vendored third-party library (do not modify)
+- `interception_installer/` — official Interception driver installer, bundled into the EXE (see its README)

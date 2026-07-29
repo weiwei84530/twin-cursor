@@ -21,11 +21,22 @@ from . import winapi as w
 from .device_names import get_display_names
 from .hotkeys import HotkeyManager
 from .overlay import Overlay
-from .router import (
-    DriverUnavailableError, MouseDevice, Router, assign_keys, connect,
-)
 from .settings_ui import SettingsWindow
 from .tray import Tray
+
+# The vendored interception package opens a driver context at import time
+# (inputs.py module level), so on a machine without the driver importing
+# the router raises immediately. Defer that failure to main() so it can
+# offer to install the driver instead of dying on import.
+try:
+    from .router import (
+        DriverUnavailableError, MouseDevice, Router, assign_keys, connect,
+    )
+    _ROUTER_IMPORT_ERROR = None
+except Exception as exc:
+    _ROUTER_IMPORT_ERROR = exc
+    DriverUnavailableError = MouseDevice = Router = None
+    assign_keys = connect = None
 
 log = logging.getLogger(__name__)
 
@@ -285,6 +296,11 @@ def main(argv=None) -> int:
             " system tray.",
             "TwinCursor", w.MB_OK | w.MB_ICONINFORMATION,
         )
+        return 1
+
+    if _ROUTER_IMPORT_ERROR is not None:
+        log.error("Interception driver unavailable: %s", _ROUTER_IMPORT_ERROR)
+        driver_setup.handle_driver_failure()
         return 1
 
     stored_selection = settings.load_selection() or {}

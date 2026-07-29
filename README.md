@@ -56,8 +56,11 @@ The single-file executable is written to `dist/TwinCursor.exe`.
 - Toggle **Mirror buttons** per slot to swap that mouse's left/right buttons.
 - Click the **Hotkey** button to record a global keyboard shortcut that flips that slot's mirror toggle; press Esc while recording to disable the hotkey. The first slot defaults to `Ctrl+Alt+M`, the second to none.
 - Mirror state and hotkeys belong to the slot (First Mouse / Second Mouse), not the device: swapping or replacing devices leaves each slot's settings in place.
+- Tick **Start with Windows** to launch TwinCursor automatically when you log on.
+- **Restore Defaults** puts everything back to a fresh install: mirroring off, the first slot's hotkey back to `Ctrl+Alt+M` and the second slot's disabled, both slots filled automatically again, and **Start with Windows** turned off.
+- **Exit TwinCursor** quits the app, same as the tray menu's **Exit**. Both buttons ask for confirmation first.
 - Keyboards that expose an extra mouse-class HID collection (and would otherwise appear in the device dropdowns) are filtered out automatically.
-- Settings are stored in the registry under `HKCU\SOFTWARE\TwinCursor`.
+- Settings are stored in the registry under `HKCU\SOFTWARE\TwinCursor`; the logon entry lives under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (per user, no administrator rights needed).
 - Right-click the tray icon → **Exit** to quit.
 - Only one instance can run at a time; a second launch exits immediately.
 
@@ -70,6 +73,7 @@ The single-file executable is written to `dist/TwinCursor.exe`.
 - `twincursor/tray.py` — system tray icon
 - `twincursor/hotkeys.py` — global hotkeys (RegisterHotKey message loop)
 - `twincursor/driver_setup.py` — first-run Interception driver installation flow
+- `twincursor/autostart.py` — run-at-logon registration
 - `twincursor/device_names.py` — human-readable device names via SetupAPI
 - `twincursor/settings.py` — registry persistence
 - `twincursor/winapi.py` — ctypes Win32 definitions

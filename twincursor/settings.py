@@ -56,6 +56,20 @@ def _write_json(value_name: str, data: dict) -> None:
     log.debug("Saved %s: %s", value_name, data)
 
 
+def _delete_value(value_name: str) -> None:
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, _KEY_PATH, 0, winreg.KEY_SET_VALUE
+        ) as key:
+            winreg.DeleteValue(key, value_name)
+    except FileNotFoundError:
+        return  # neither the key nor the value exists: nothing to do
+    except OSError as exc:
+        log.warning("Failed to delete %s: %s", value_name, exc)
+        return
+    log.debug("Deleted %s", value_name)
+
+
 def load_slots() -> dict:
     """Return the stored per-slot settings ({"a": entry, "b": entry}).
 
@@ -147,3 +161,8 @@ def load_selection():
 def save_selection(assignment) -> None:
     """Persist the slot assignment (a sequence of two hwid keys / Nones)."""
     _write_json(_SELECTION_VALUE, dict(zip(_SLOT_NAMES, assignment)))
+
+
+def clear_selection() -> None:
+    """Forget the stored assignment, so both slots are filled automatically."""
+    _delete_value(_SELECTION_VALUE)

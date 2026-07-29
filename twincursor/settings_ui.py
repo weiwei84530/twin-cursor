@@ -6,10 +6,11 @@ request actions through flags polled by an `after` loop. Closing the window
 only hides it; the application keeps running in the tray.
 
 The window shows two slots (Mouse A / Mouse B), each with a device
-dropdown, a mirror-buttons checkbox and a hotkey recorder. State is pulled
-from the application through `get_state` on every poll tick, so changes
-made from other threads (hotkey toggles, device hot-plug) show up without
-any push mechanism.
+dropdown, a mirror-buttons checkbox and a hotkey recorder, followed by a
+"Start with Windows" checkbox and the Restore Defaults / Exit buttons.
+State is pulled from the application through `get_state` on every poll
+tick, so changes made from other threads (hotkey toggles, device
+hot-plug) show up without any push mechanism.
 """
 
 import gc
@@ -73,19 +74,24 @@ def _ensure_tcl_env() -> None:
 _ensure_tcl_env()
 
 import tkinter as tk  # noqa: E402  (needs the Tcl environment set up first)
-from tkinter import ttk  # noqa: E402
+from tkinter import messagebox, ttk  # noqa: E402
 
 
 class SettingsWindow:
     """Owns the tkinter thread. Public methods are safe from any thread."""
 
     def __init__(self, get_state, on_device_selected, on_mirror_toggle,
-                 on_hotkey_change, on_shown):
+                 on_hotkey_change, on_autostart_toggle, on_restore_defaults,
+                 on_exit, on_shown):
         self._get_state = get_state
         self._on_device_selected = on_device_selected
         self._on_mirror_toggle = on_mirror_toggle
         self._on_hotkey_change = on_hotkey_change
+        self._on_autostart_toggle = on_autostart_toggle
+        self._on_restore_defaults = on_restore_defaults
+        self._on_exit = on_exit
         self._on_shown = on_shown
+        self._root = None  # parent for the confirmation dialogs
         self._show_requested = threading.Event()
         self._stop_requested = threading.Event()
         self._thread = threading.Thread(
@@ -115,6 +121,7 @@ class SettingsWindow:
         except Exception:
             log.exception("Failed to create the settings window")
             return
+        self._root = root
 
         def poll():
             if self._stop_requested.is_set():
@@ -143,6 +150,8 @@ class SettingsWindow:
         # ("Tcl_AsyncDelete: async handler deleted by the wrong thread").
         self._slots = None
         self._icon_images = None
+        self._autostart_var = None
+        self._root = None
         del root
         gc.collect()
 
@@ -177,6 +186,7 @@ class SettingsWindow:
 
         frame = ttk.Frame(root, padding=12)
         frame.grid(sticky="nsew")
+        frame.columnconfigure(0, weight=1)
 
         for slot in range(2):
             box = ttk.LabelFrame(frame, text=_SLOT_TITLES[slot], padding=(10, 6))
@@ -223,6 +233,29 @@ class SettingsWindow:
                 "keys": [],  # device keys parallel to the dropdown entries
             })
 
+        self._autostart_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            frame,
+            text="Start with Windows",
+            variable=self._autostart_var,
+            command=self._autostart_toggled,
+        ).grid(row=2, column=0, sticky="w", pady=(12, 0))
+
+        ttk.Separator(frame, orient="horizontal").grid(
+            row=3, column=0, sticky="ew", pady=(10, 0)
+        )
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=4, column=0, sticky="e", pady=(10, 0))
+        ttk.Button(
+            buttons, text="Restore Defaults", width=18,
+            command=self._restore_defaults,
+        ).grid(row=0, column=0)
+        ttk.Button(
+            buttons, text="Exit TwinCursor", width=18,
+            command=self._exit_clicked,
+        ).grid(row=0, column=1, padx=(8, 0))
+
         self._refresh(force=True)
 
     # -- state sync ---------------------------------------------------------
@@ -239,6 +272,7 @@ class SettingsWindow:
             return
         self._last_state = state
 
+        self._autostart_var.set(state["autostart"])
         keys = [key for key, _ in state["devices"]]
         labels = [label for _, label in state["devices"]]
         for slot, slot_state in enumerate(state["slots"]):
@@ -285,6 +319,52 @@ class SettingsWindow:
             self._on_mirror_toggle(slot, self._slots[slot]["mirror_var"].get())
         except Exception:
             log.exception("Mirror toggle failed")
+
+    def _autostart_toggled(self) -> None:
+        try:
+            self._on_autostart_toggle(self._autostart_var.get())
+        except Exception:
+            log.exception("Autostart toggle failed")
+        # A failed registry write leaves the checkbox out of step with
+        # reality; the next poll puts it back.
+        self._last_state = None
+
+    def _restore_defaults(self) -> None:
+        if not self._confirm(
+            "Restore all settings to their defaults?\n\n"
+            "Button mirroring and the hotkeys go back to their initial"
+            " values, the device slots are filled automatically again, and"
+            ' "Start with Windows" is turned off.',
+            icon=messagebox.WARNING,
+        ):
+            return
+        try:
+            self._on_restore_defaults()
+        except Exception:
+            log.exception("Restoring the defaults failed")
+        self._last_state = None
+        self._refresh(force=True)
+
+    def _exit_clicked(self) -> None:
+        if not self._confirm(
+            "Exit TwinCursor?\n\n"
+            "Every mouse goes back to sharing the one system cursor and the"
+            " ghost cursor disappears. Launch TwinCursor again to restore"
+            " it."
+        ):
+            return
+        try:
+            self._on_exit()
+        except Exception:
+            log.exception("Exit request failed")
+
+    def _confirm(self, message: str, icon: str = messagebox.QUESTION) -> bool:
+        # The poll loop keeps running inside the dialog's nested event
+        # loop, which is harmless: it only refreshes widget values.
+        return bool(messagebox.askyesno(
+            "TwinCursor", message, icon=icon, default=messagebox.NO,
+            parent=self._root,
+        ))
 
     # -- hotkey recording ---------------------------------------------------
 

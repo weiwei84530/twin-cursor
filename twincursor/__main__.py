@@ -15,6 +15,7 @@ import logging
 import sys
 import threading
 
+from . import autostart
 from . import driver_setup
 from . import settings
 from . import winapi as w
@@ -51,6 +52,14 @@ _DEFAULT_HOTKEY_FIRST = {
 _AUTO = object()  # slot marker: pick a device automatically
 
 
+def _default_slot_settings() -> list[dict]:
+    """Factory-fresh slot settings (startup default and Restore Defaults)."""
+    return [
+        {"is_mirrored": False, "hotkey": dict(_DEFAULT_HOTKEY_FIRST)},
+        {"is_mirrored": False, "hotkey": None},
+    ]
+
+
 class App:
     """Owns the device list and slot assignment; bridges UI, hotkeys, router.
 
@@ -66,10 +75,8 @@ class App:
         self._assignment: list = [None, None]  # settings key or None per slot
         # Mirror state and hotkey belong to the slot, not the device:
         # whatever device occupies a slot inherits that slot's settings.
-        self._slot_settings: list[dict] = [
-            {"is_mirrored": False, "hotkey": dict(_DEFAULT_HOTKEY_FIRST)},
-            {"is_mirrored": False, "hotkey": None},
-        ]
+        self._slot_settings: list[dict] = _default_slot_settings()
+        self._autostart = autostart.is_enabled()
         stored_slots = settings.load_slots()
         for index, name in enumerate(("a", "b")):
             stored = stored_slots.get(name)
@@ -204,7 +211,11 @@ class App:
                     "hotkey_label": hotkey["label"] if hotkey else None,
                     "hwid": device.hwid if device else "",
                 })
-            return {"devices": devices, "slots": slots}
+            return {
+                "devices": devices,
+                "slots": slots,
+                "autostart": self._autostart,
+            }
 
     # -- callbacks (settings / hotkey / router threads) ---------------------
 
@@ -251,6 +262,26 @@ class App:
             active = self._slot_device(slot) is not None
         self._hotkeys.set_hotkey(slot + 1, hotkey if active else None)
 
+    def on_autostart_toggle(self, value: bool) -> None:
+        autostart.set_enabled(bool(value))
+        with self._lock:
+            # Re-read rather than trust the request: a failed registry
+            # write must not leave the UI claiming success.
+            self._autostart = autostart.is_enabled()
+
+    def restore_defaults(self) -> None:
+        """Put every stored setting back to its factory value."""
+        autostart.set_enabled(False)
+        with self._lock:
+            self._slot_settings = _default_slot_settings()
+            self._autostart = autostart.is_enabled()
+            settings.save_slots(self._slot_settings)
+            settings.clear_selection()
+        # Re-runs the automatic slot assignment and pushes the fresh mirror
+        # state and hotkeys to the router and the hotkey manager.
+        self.resolve_initial_assignment()
+        log.info("Settings restored to defaults")
+
     def on_hotkey_fired(self, hotkey_id: int) -> None:
         slot = hotkey_id - 1
         with self._lock:
@@ -263,6 +294,10 @@ class App:
         self._router.set_mirrored(device, value)
 
     def on_settings_shown(self) -> None:
+        with self._lock:
+            # Cheap, and it catches the entry being removed elsewhere
+            # (Task Manager, Settings > Startup apps).
+            self._autostart = autostart.is_enabled()
         # Re-enumerate on the router thread so driver access never races
         # with the input loop; the UI picks up the result on its next poll.
         self._router.request_refresh(self._on_refresh_result)
@@ -306,6 +341,9 @@ def main(argv=None) -> int:
         )
         return 1
 
+    # Keep the logon entry pointing at this executable in case it moved.
+    autostart.sync_command()
+
     if _ROUTER_IMPORT_ERROR is not None:
         log.error("Interception driver unavailable: %s", _ROUTER_IMPORT_ERROR)
         driver_setup.handle_driver_failure()
@@ -339,6 +377,9 @@ def main(argv=None) -> int:
         on_device_selected=app.on_device_selected,
         on_mirror_toggle=app.on_mirror_toggle,
         on_hotkey_change=app.on_hotkey_change,
+        on_autostart_toggle=app.on_autostart_toggle,
+        on_restore_defaults=app.restore_defaults,
+        on_exit=stop.set,
         on_shown=app.on_settings_shown,
     )
     tray = Tray(on_open_settings=ui.show, on_exit=stop.set)

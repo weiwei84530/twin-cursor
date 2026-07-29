@@ -1,6 +1,6 @@
 [project]
 name = "twincursor"
-version = "1.0.0"
+version = "1.1.0"
 description = "A dual-mouse, dual-cursor tool for Windows, designed for ambidextrous users"
 readme = "README.md"
 requires-python = ">=3.13"

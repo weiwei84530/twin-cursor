@@ -42,9 +42,8 @@ log = logging.getLogger(__name__)
 
 _MUTEX_NAME = "Local\\TwinCursor.SingleInstance"
 
-# The first slot is the single-mouse slot, so a never-configured device
-# dropped into it gets a swap hotkey by default; the second slot defaults
-# to no hotkey.
+# The first slot is the single-mouse slot, so it gets a swap hotkey by
+# default; the second slot defaults to no hotkey.
 _DEFAULT_HOTKEY_FIRST = {
     "mods": w.MOD_CONTROL | w.MOD_ALT, "vk": 0x4D, "label": "Ctrl+Alt+M"
 }
@@ -65,6 +64,20 @@ class App:
         self._lock = threading.RLock()
         self._mice: dict[str, MouseDevice] = {}  # settings key -> device
         self._assignment: list = [None, None]  # settings key or None per slot
+        # Mirror state and hotkey belong to the slot, not the device:
+        # whatever device occupies a slot inherits that slot's settings.
+        self._slot_settings: list[dict] = [
+            {"is_mirrored": False, "hotkey": dict(_DEFAULT_HOTKEY_FIRST)},
+            {"is_mirrored": False, "hotkey": None},
+        ]
+        stored_slots = settings.load_slots()
+        for index, name in enumerate(("a", "b")):
+            stored = stored_slots.get(name)
+            if stored is None:
+                continue
+            self._slot_settings[index]["is_mirrored"] = stored["is_mirrored"]
+            if "hotkey" in stored:
+                self._slot_settings[index]["hotkey"] = stored["hotkey"]
 
     # -- device list --------------------------------------------------------
 
@@ -86,7 +99,6 @@ class App:
             for key in new_keys:
                 num, hwid = present[key]
                 device = MouseDevice(num, hwid, key, names.get(hwid, hwid))
-                settings.apply([device])
                 self._mice[key] = device
                 log.info("Mouse found: %s (%s)", device.label, hwid)
             for key, (num, _hwid) in present.items():
@@ -137,33 +149,27 @@ class App:
                 if free is not None:
                     slots[0] = free
             self._assignment = slots
-            self._resolve_hotkey_defaults()
         self._apply_assignment()
-
-    def _resolve_hotkey_defaults(self) -> None:
-        for index, key in enumerate(self._assignment):
-            if key is None:
-                continue
-            device = self._mice[key]
-            if device.hotkey is settings.HOTKEY_UNSET:
-                device.hotkey = (
-                    dict(_DEFAULT_HOTKEY_FIRST) if index == 0 else None
-                )
 
     def _apply_assignment(self) -> None:
         with self._lock:
-            devices = [self._mice[key] for key in self._assignment if key]
+            devices = []
+            hotkeys = []
+            for index, key in enumerate(self._assignment):
+                device = self._mice.get(key) if key else None
+                if device is not None:
+                    # The device takes over the mirror state of the slot it
+                    # now occupies.
+                    device.is_mirrored = self._slot_settings[index]["is_mirrored"]
+                    devices.append(device)
+                # A slot's hotkey is only active while it holds a device.
+                hotkeys.append(
+                    self._slot_settings[index]["hotkey"] if device else None
+                )
             blocked = [
                 device for key, device in self._mice.items()
                 if key not in self._assignment
             ]
-            hotkeys = []
-            for key in self._assignment:
-                device = self._mice.get(key) if key else None
-                hotkeys.append(
-                    device.hotkey
-                    if device and isinstance(device.hotkey, dict) else None
-                )
         self._router.configure(devices, blocked)
         for index, hotkey in enumerate(hotkeys):
             self._hotkeys.set_hotkey(index + 1, hotkey)
@@ -188,16 +194,14 @@ class App:
         with self._lock:
             devices = [(key, device.label) for key, device in self._mice.items()]
             slots = []
-            for key in self._assignment:
+            for index, key in enumerate(self._assignment):
                 device = self._mice.get(key) if key else None
+                hotkey = self._slot_settings[index]["hotkey"]
                 slots.append({
                     "key": key,
                     "label": device.label if device else None,
-                    "mirrored": bool(device.is_mirrored) if device else False,
-                    "hotkey_label": (
-                        device.hotkey["label"]
-                        if device and isinstance(device.hotkey, dict) else None
-                    ),
+                    "mirrored": bool(self._slot_settings[index]["is_mirrored"]),
+                    "hotkey_label": hotkey["label"] if hotkey else None,
                     "hwid": device.hwid if device else "",
                 })
             return {"devices": devices, "slots": slots}
@@ -224,35 +228,39 @@ class App:
                         return
                 self._assignment[other] = displaced
             self._assignment[slot] = key
-            self._resolve_hotkey_defaults()
             settings.save_selection(self._assignment)
-            settings.save(self._mice.values())  # persist defaulted hotkeys
         self._apply_assignment()
 
     def on_mirror_toggle(self, slot: int, value: bool) -> None:
-        device = self._slot_device(slot)
-        if device is None:
-            return
-        self._router.set_mirrored(device, bool(value))
         with self._lock:
-            settings.save(self._mice.values())
+            if not 0 <= slot < len(self._slot_settings):
+                return
+            self._slot_settings[slot]["is_mirrored"] = bool(value)
+            settings.save_slots(self._slot_settings)
+            device = self._slot_device(slot)
+        if device is not None:
+            self._router.set_mirrored(device, bool(value))
 
     def on_hotkey_change(self, slot: int, hotkey) -> None:
-        device = self._slot_device(slot)
-        if device is None:
-            return
         with self._lock:
-            device.hotkey = dict(hotkey) if hotkey else None
-            settings.save(self._mice.values())
-        self._hotkeys.set_hotkey(slot + 1, device.hotkey)
+            if not 0 <= slot < len(self._slot_settings):
+                return
+            hotkey = dict(hotkey) if hotkey else None
+            self._slot_settings[slot]["hotkey"] = hotkey
+            settings.save_slots(self._slot_settings)
+            active = self._slot_device(slot) is not None
+        self._hotkeys.set_hotkey(slot + 1, hotkey if active else None)
 
     def on_hotkey_fired(self, hotkey_id: int) -> None:
-        device = self._slot_device(hotkey_id - 1)
-        if device is None:
-            return
-        self._router.set_mirrored(device, not device.is_mirrored)
+        slot = hotkey_id - 1
         with self._lock:
-            settings.save(self._mice.values())
+            device = self._slot_device(slot)
+            if device is None:
+                return
+            value = not self._slot_settings[slot]["is_mirrored"]
+            self._slot_settings[slot]["is_mirrored"] = value
+            settings.save_slots(self._slot_settings)
+        self._router.set_mirrored(device, value)
 
     def on_settings_shown(self) -> None:
         # Re-enumerate on the router thread so driver access never races

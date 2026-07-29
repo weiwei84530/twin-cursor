@@ -30,8 +30,8 @@ from interception.constants import (
     MouseFlag,
 )
 
-from . import settings
 from . import winapi as w
+from .device_names import find_keyboard_hwids
 
 log = logging.getLogger(__name__)
 
@@ -98,7 +98,6 @@ class MouseDevice:
         self.settings_key = settings_key
         self.label = label
         self.is_mirrored = False
-        self.hotkey = settings.HOTKEY_UNSET  # dict, None (disabled) or unset
         # Remembered cursor position; authoritative only while inactive.
         # Kept as floats so slow ghost movements can accumulate fractions.
         self.x = 0.0
@@ -106,12 +105,18 @@ class MouseDevice:
         self.buttons_down: set[str] = set()
 
 
+# Hardware IDs already reported (once, at info level) as keyboard-backed.
+_logged_keyboard_hwids: set[str] = set()
+
+
 def enumerate_mice(interception) -> list[tuple[int, str]]:
     """Return (device_num, hardware_id) for every present mouse device.
 
     A populated HWID means a device is actually present in that slot. The
     driver returns a NUL-separated list of hardware IDs; the first entry is
-    the most specific one.
+    the most specific one. Some keyboards register an extra mouse-class HID
+    collection that the driver then lists as a mouse; those entries are
+    filtered out so a keyboard never shows up as a selectable mouse.
     """
     found: list[tuple[int, str]] = []
     for num, device in enumerate(interception.devices):
@@ -123,6 +128,14 @@ def enumerate_mice(interception) -> list[tuple[int, str]]:
             hwid = None
         if hwid:
             found.append((num, hwid.split("\x00", 1)[0].strip()))
+
+    keyboards = find_keyboard_hwids(hwid for _, hwid in found)
+    if keyboards:
+        for _, hwid in found:
+            if hwid in keyboards and hwid not in _logged_keyboard_hwids:
+                _logged_keyboard_hwids.add(hwid)
+                log.info("Ignoring keyboard device listed as a mouse: %s", hwid)
+        found = [(num, hwid) for num, hwid in found if hwid not in keyboards]
     return found
 
 

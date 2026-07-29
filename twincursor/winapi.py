@@ -409,6 +409,7 @@ DIGCF_ALLCLASSES = 0x00000004
 
 SPDRP_DEVICEDESC = 0x00000000
 SPDRP_HARDWAREID = 0x00000001
+SPDRP_COMPATIBLEIDS = 0x00000002
 
 DEVPROP_TYPE_STRING = 0x00000012
 
@@ -477,10 +478,12 @@ if setupapi is not None:
     setupapi.SetupDiDestroyDeviceInfoList.argtypes = [wintypes.HANDLE]
     setupapi.SetupDiDestroyDeviceInfoList.restype = wintypes.BOOL
 
-    cfgmgr32.CM_Get_Parent.argtypes = [
-        ctypes.POINTER(wintypes.DWORD), wintypes.DWORD, ctypes.c_ulong
-    ]
-    cfgmgr32.CM_Get_Parent.restype = ctypes.c_ulong  # CONFIGRET, 0 = success
+    for _cm_walk in ("CM_Get_Parent", "CM_Get_Child", "CM_Get_Sibling"):
+        _fn = getattr(cfgmgr32, _cm_walk)
+        _fn.argtypes = [
+            ctypes.POINTER(wintypes.DWORD), wintypes.DWORD, ctypes.c_ulong
+        ]
+        _fn.restype = ctypes.c_ulong  # CONFIGRET, 0 = success
 
 
 # --- Small helpers ------------------------------------------------------

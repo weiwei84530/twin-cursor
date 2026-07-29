@@ -2,14 +2,18 @@
 
 Settings are stored as JSON strings under HKCU\\SOFTWARE\\TwinCursor:
 
-- "MirrorSettings": per-mouse settings keyed by hardware ID, so a setting
-  follows the physical device across reboots and USB port changes. Each
-  entry holds "is_mirrored" and, once configured, "hotkey" (null when the
-  user explicitly disabled it; absent when never configured, in which case
-  slot defaults apply).
+- "SlotSettings": per-slot settings keyed by slot name ("a" = First Mouse,
+  "b" = Second Mouse). Each entry holds "is_mirrored" and "hotkey" (null =
+  disabled). Mirror state and hotkey belong to the slot, not the device:
+  changing or swapping the devices in the slots leaves each slot's settings
+  in place.
 - "DeviceSelection": {"a": <hwid key>|null, "b": <hwid key>|null}. A slot
   missing from the dict means "assign automatically"; null means the user
   explicitly chose no device.
+
+Versions up to 1.0 stored per-device settings keyed by hardware ID in
+"MirrorSettings"; on first load those are migrated to slot settings using
+the stored device selection.
 """
 
 import json
@@ -19,13 +23,10 @@ import winreg
 log = logging.getLogger(__name__)
 
 _KEY_PATH = r"SOFTWARE\TwinCursor"
-_MIRROR_VALUE = "MirrorSettings"
+_SLOT_VALUE = "SlotSettings"
 _SELECTION_VALUE = "DeviceSelection"
+_LEGACY_MIRROR_VALUE = "MirrorSettings"
 _SLOT_NAMES = ("a", "b")
-
-# Sentinel for a per-device hotkey that was never configured (as opposed to
-# one the user explicitly cleared, which is stored as null).
-HOTKEY_UNSET = object()
 
 
 def _read_json(value_name: str):
@@ -55,38 +56,63 @@ def _write_json(value_name: str, data: dict) -> None:
     log.debug("Saved %s: %s", value_name, data)
 
 
-def load() -> dict:
-    """Return the stored per-mouse settings mapping, or an empty dict."""
-    return _read_json(_MIRROR_VALUE) or {}
+def load_slots() -> dict:
+    """Return the stored per-slot settings ({"a": entry, "b": entry}).
 
-
-def save(devices) -> None:
-    """Persist the settings of the given mouse devices.
-
-    Entries for devices that are not currently connected are preserved.
+    Only slots that were actually stored are included. Each entry has
+    "is_mirrored" (bool) and, when it was stored, "hotkey" (validated dict
+    or None); an absent "hotkey" means the slot default applies.
     """
-    data = load()
-    for device in devices:
-        entry = {"is_mirrored": device.is_mirrored}
-        if device.hotkey is not HOTKEY_UNSET:
-            entry["hotkey"] = device.hotkey
-        data[device.settings_key] = entry
-    _write_json(_MIRROR_VALUE, data)
-
-
-def apply(devices) -> None:
-    """Apply stored settings to the given mouse devices."""
-    data = load()
-    for device in devices:
-        entry = data.get(device.settings_key)
+    data = _read_json(_SLOT_VALUE)
+    if data is None:
+        data = _migrate_legacy()
+    if data is None:
+        return {}
+    result = {}
+    for name in _SLOT_NAMES:
+        entry = data.get(name)
         if not isinstance(entry, dict):
             continue
-        device.is_mirrored = bool(entry.get("is_mirrored", False))
+        cleaned = {"is_mirrored": bool(entry.get("is_mirrored", False))}
         if "hotkey" in entry:
-            device.hotkey = _validate_hotkey(entry["hotkey"])
-        log.debug(
-            "%s settings restored: mirrored=%s", device.label, device.is_mirrored
-        )
+            cleaned["hotkey"] = _validate_hotkey(entry["hotkey"])
+        result[name] = cleaned
+    return result
+
+
+def save_slots(slots) -> None:
+    """Persist the slot settings (a sequence of two dicts)."""
+    _write_json(_SLOT_VALUE, {
+        name: {
+            "is_mirrored": bool(slot["is_mirrored"]),
+            "hotkey": slot["hotkey"],
+        }
+        for name, slot in zip(_SLOT_NAMES, slots)
+    })
+
+
+def _migrate_legacy():
+    """Build slot settings from the pre-1.1 per-device store, if present.
+
+    The devices stored in the selection carry their old settings over to
+    the slot they were assigned to; from then on the settings stay with
+    the slot.
+    """
+    mirror = _read_json(_LEGACY_MIRROR_VALUE)
+    if not mirror:
+        return None
+    selection = _read_json(_SELECTION_VALUE) or {}
+    data = {}
+    for name in _SLOT_NAMES:
+        key = selection.get(name)
+        entry = mirror.get(key) if isinstance(key, str) else None
+        if isinstance(entry, dict):
+            data[name] = entry
+    if not data:
+        return None
+    _write_json(_SLOT_VALUE, data)
+    log.info("Migrated legacy per-device settings to slot settings")
+    return data
 
 
 def _validate_hotkey(value):

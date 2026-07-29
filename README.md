@@ -53,9 +53,11 @@ The single-file executable is written to `dist/TwinCursor.exe`.
 
 - The app lives in the system tray. Left-click the tray icon (or right-click → **Open Settings**) to open the settings window.
 - Each of the two slots (First Mouse / Second Mouse) has a **Device** dropdown listing the connected mice by product name. Pick which physical mouse fills each slot; the second slot can also be set to **None**. With both slots filled the app runs in dual-cursor mode; with one it runs in the simple single-mouse mode. Connected mice that are not assigned to a slot are disabled while the app runs.
-- Toggle **Mirror buttons** per mouse to swap its left/right buttons.
-- Click the **Hotkey** button to record a global keyboard shortcut that flips that mouse's mirror toggle; press Esc while recording to disable the hotkey. The first mouse defaults to `Ctrl+Alt+M`, the second to none.
-- Settings are stored in the registry under `HKCU\SOFTWARE\TwinCursor`, keyed by mouse hardware ID.
+- Toggle **Mirror buttons** per slot to swap that mouse's left/right buttons.
+- Click the **Hotkey** button to record a global keyboard shortcut that flips that slot's mirror toggle; press Esc while recording to disable the hotkey. The first slot defaults to `Ctrl+Alt+M`, the second to none.
+- Mirror state and hotkeys belong to the slot (First Mouse / Second Mouse), not the device: swapping or replacing devices leaves each slot's settings in place.
+- Keyboards that expose an extra mouse-class HID collection (and would otherwise appear in the device dropdowns) are filtered out automatically.
+- Settings are stored in the registry under `HKCU\SOFTWARE\TwinCursor`.
 - Right-click the tray icon → **Exit** to quit.
 - Only one instance can run at a time; a second launch exits immediately.
 

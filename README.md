@@ -8,6 +8,10 @@ TwinCursor also works with a single mouse: set the second device slot to **None*
 
 The ghost cursor uses your actual system cursor (theme, pointer size and per-monitor DPI scaling are respected), drawn on a tiny per-pixel-alpha layered window.
 
+## Screenshot
+
+![TwinCursor settings window](screenshot.png)
+
 ## Requirements
 
 - Windows 10 or later

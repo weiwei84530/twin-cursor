@@ -2,6 +2,9 @@
 
 A dual-mouse, dual-cursor tool for Windows, designed for ambidextrous users.
 
+Read the story behind it on
+[Weiwei Studio](https://weiweistudio.com/work/twin-cursor/).
+
 TwinCursor lets two physical mice share one PC while each keeps its own cursor position. When you switch to the other mouse, the OS cursor jumps back to where that mouse left off, and a ghost cursor marks the idle mouse's position. While one mouse is dragging or actively moving, the other mouse moves its own ghost cursor instead of taking over (its clicks are ignored); control switches as soon as the first mouse pauses. A settings window provides a per-mouse "Mirror Buttons" toggle that swaps the left and right buttons, a per-mouse cursor colour, and a global hotkey per mouse to flip the mirror toggle from the keyboard.
 
 TwinCursor also works with a single mouse: set the second device slot to **None** and the app drops into a lightweight single-mouse mode — no input interception on the assigned mouse, no ghost cursor — where the mirror toggle (and its hotkey) simply swaps the buttons using the standard Windows API. Mice that are connected but not assigned to a slot are disabled entirely while the app runs.

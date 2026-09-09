@@ -7,8 +7,9 @@ only hides it; the application keeps running in the tray.
 
 The window shows two slots (Mouse A / Mouse B), each with a device
 dropdown, a mirror-buttons checkbox, a colour chip and a hotkey recorder,
-followed by a "Start with Windows" checkbox and the Restore Defaults /
-Exit buttons. The chip opens a small palette popup: the colour it picks
+followed by a "Start with Windows" checkbox and a bottom row holding a
+credit link to the product's page and the Restore Defaults / Exit
+buttons. The chip opens a small palette popup: the colour it picks
 tints that mouse's cursor, so the two are told apart at a glance. Colours
 mixed in the custom chooser come back as a "Recent" row under the
 palette.
@@ -22,6 +23,7 @@ import logging
 import os
 import sys
 import threading
+import webbrowser
 from pathlib import Path
 
 from . import resource_path
@@ -37,6 +39,9 @@ _NONE_LABEL = "None"
 # nearest-neighbour artifacts Tk produces when it scales down itself.
 _ICON_SIZES = (16, 20, 24, 32, 48, 64)
 _RECORDING_TEXT = "Press keys… (Esc = none)"
+# The page that introduces TwinCursor. This window has no language of its
+# own, so it takes the portfolio's bare path, which is the English one.
+_STUDIO_URL = "https://weiweistudio.com/work/twin-cursor/"
 
 # Palette offered by the colour popup. The tint keeps each pixel's
 # brightness and only replaces its hue, so saturated colours read best.
@@ -275,8 +280,22 @@ class SettingsWindow:
             row=3, column=0, sticky="ew", pady=(10, 0)
         )
 
-        buttons = ttk.Frame(frame)
-        buttons.grid(row=4, column=0, sticky="e", pady=(10, 0))
+        # One bottom row: the credit at its left end, the buttons at its
+        # right. Column 0 carries the weight, so the gap between them is
+        # whatever the row has left over.
+        bottom = ttk.Frame(frame)
+        bottom.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        bottom.columnconfigure(0, weight=1)
+
+        credit = ttk.Label(
+            bottom, text="Made by Weiwei Studio ↗",
+            foreground="gray", cursor="hand2",
+        )
+        credit.grid(row=0, column=0, sticky="w", padx=(0, 12))
+        credit.bind("<Button-1>", lambda _e: self._open_studio())
+
+        buttons = ttk.Frame(bottom)
+        buttons.grid(row=0, column=1, sticky="e")
         ttk.Button(
             buttons, text="Restore Defaults", width=18,
             command=self._restore_defaults,
@@ -376,6 +395,12 @@ class SettingsWindow:
         # A failed registry write leaves the checkbox out of step with
         # reality; the next poll puts it back.
         self._last_state = None
+
+    def _open_studio(self) -> None:
+        try:
+            webbrowser.open(_STUDIO_URL)
+        except Exception:
+            log.exception("Could not open %s", _STUDIO_URL)
 
     def _restore_defaults(self) -> None:
         if not self._confirm(

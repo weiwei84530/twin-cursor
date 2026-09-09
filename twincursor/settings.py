@@ -3,10 +3,10 @@
 Settings are stored as JSON strings under HKCU\\SOFTWARE\\TwinCursor:
 
 - "SlotSettings": per-slot settings keyed by slot name ("a" = First Mouse,
-  "b" = Second Mouse). Each entry holds "is_mirrored" and "hotkey" (null =
-  disabled). Mirror state and hotkey belong to the slot, not the device:
-  changing or swapping the devices in the slots leaves each slot's settings
-  in place.
+  "b" = Second Mouse). Each entry holds "is_mirrored", "hotkey" (null =
+  disabled) and "color" ("#rrggbb", or null for the untinted system
+  cursor). These belong to the slot, not the device: changing or swapping
+  the devices in the slots leaves each slot's settings in place.
 - "DeviceSelection": {"a": <hwid key>|null, "b": <hwid key>|null}. A slot
   missing from the dict means "assign automatically"; null means the user
   explicitly chose no device.
@@ -18,6 +18,7 @@ the stored device selection.
 
 import json
 import logging
+import re
 import winreg
 
 log = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ _SLOT_VALUE = "SlotSettings"
 _SELECTION_VALUE = "DeviceSelection"
 _LEGACY_MIRROR_VALUE = "MirrorSettings"
 _SLOT_NAMES = ("a", "b")
+_COLOR_PATTERN = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
 def _read_json(value_name: str):
@@ -74,8 +76,9 @@ def load_slots() -> dict:
     """Return the stored per-slot settings ({"a": entry, "b": entry}).
 
     Only slots that were actually stored are included. Each entry has
-    "is_mirrored" (bool) and, when it was stored, "hotkey" (validated dict
-    or None); an absent "hotkey" means the slot default applies.
+    "is_mirrored" (bool) and, when they were stored, "hotkey" (validated
+    dict or None) and "color" ("#rrggbb" or None); an absent key means the
+    slot default applies.
     """
     data = _read_json(_SLOT_VALUE)
     if data is None:
@@ -90,6 +93,8 @@ def load_slots() -> dict:
         cleaned = {"is_mirrored": bool(entry.get("is_mirrored", False))}
         if "hotkey" in entry:
             cleaned["hotkey"] = _validate_hotkey(entry["hotkey"])
+        if "color" in entry:
+            cleaned["color"] = validate_color(entry["color"])
         result[name] = cleaned
     return result
 
@@ -100,6 +105,7 @@ def save_slots(slots) -> None:
         name: {
             "is_mirrored": bool(slot["is_mirrored"]),
             "hotkey": slot["hotkey"],
+            "color": slot["color"],
         }
         for name, slot in zip(_SLOT_NAMES, slots)
     })
@@ -127,6 +133,13 @@ def _migrate_legacy():
     _write_json(_SLOT_VALUE, data)
     log.info("Migrated legacy per-device settings to slot settings")
     return data
+
+
+def validate_color(value):
+    """Return the value as a normalized "#rrggbb" string, or None."""
+    if isinstance(value, str) and _COLOR_PATTERN.match(value):
+        return value.lower()
+    return None
 
 
 def _validate_hotkey(value):
@@ -158,9 +171,15 @@ def load_selection():
     }
 
 
-def save_selection(assignment) -> None:
-    """Persist the slot assignment (a sequence of two hwid keys / Nones)."""
-    _write_json(_SELECTION_VALUE, dict(zip(_SLOT_NAMES, assignment)))
+def save_selection(selection) -> None:
+    """Persist the slot selection ({"a": key|None, ...}).
+
+    Slots left out of the mapping stay unstored, which keeps them on
+    automatic assignment.
+    """
+    _write_json(_SELECTION_VALUE, {
+        name: selection[name] for name in _SLOT_NAMES if name in selection
+    })
 
 
 def clear_selection() -> None:

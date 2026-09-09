@@ -67,11 +67,27 @@ MOD_SHIFT = 0x0004
 MOD_WIN = 0x0008
 MOD_NOREPEAT = 0x4000
 
-# LoadImage
+# LoadImage / CopyImage
 IMAGE_CURSOR = 2
+LR_DEFAULTSIZE = 0x0040
 LR_LOADFROMFILE = 0x0010
+LR_COPYFROMRESOURCE = 0x4000
 LR_SHARED = 0x8000
+
+# System cursor ids (OCR_*), as accepted by LoadImage and SetSystemCursor.
+# The animated ones (OCR_WAIT, OCR_APPSTARTING) are deliberately absent:
+# only their first frame could be reproduced.
 OCR_NORMAL = 32512
+OCR_IBEAM = 32513
+OCR_CROSS = 32515
+OCR_UP = 32516
+OCR_SIZENWSE = 32642
+OCR_SIZENESW = 32643
+OCR_SIZEWE = 32644
+OCR_SIZENS = 32645
+OCR_SIZEALL = 32646
+OCR_NO = 32648
+OCR_HAND = 32649
 
 # DrawIconEx
 DI_NORMAL = 0x0003
@@ -89,9 +105,11 @@ DIB_RGB_COLORS = 0
 MONITOR_DEFAULTTONEAREST = 2
 
 # SystemParametersInfo
+SPI_SETCURSORS = 0x0057
 SPI_GETMOUSESPEED = 0x0070
 
 # GetSystemMetrics
+SM_CXCURSOR = 13
 SM_SWAPBUTTON = 23
 
 # Errors / misc
@@ -281,6 +299,18 @@ user32.DrawIconEx.restype = wintypes.BOOL
 user32.DestroyCursor.argtypes = [wintypes.HANDLE]
 user32.DestroyCursor.restype = wintypes.BOOL
 
+user32.CopyImage.argtypes = [
+    wintypes.HANDLE, wintypes.UINT, ctypes.c_int, ctypes.c_int, wintypes.UINT
+]
+user32.CopyImage.restype = wintypes.HANDLE
+
+user32.CreateIconIndirect.argtypes = [ctypes.POINTER(ICONINFO)]
+user32.CreateIconIndirect.restype = wintypes.HANDLE
+
+# The system takes ownership of hcur and destroys it.
+user32.SetSystemCursor.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+user32.SetSystemCursor.restype = wintypes.BOOL
+
 user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
 user32.MonitorFromPoint.restype = wintypes.HMONITOR
 
@@ -319,6 +349,11 @@ user32.PostThreadMessageW.restype = wintypes.BOOL
 
 gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
 gdi32.CreateCompatibleDC.restype = wintypes.HDC
+
+gdi32.CreateBitmap.argtypes = [
+    ctypes.c_int, ctypes.c_int, wintypes.UINT, wintypes.UINT, ctypes.c_void_p
+]
+gdi32.CreateBitmap.restype = wintypes.HBITMAP
 
 gdi32.CreateDIBSection.argtypes = [
     wintypes.HDC, ctypes.POINTER(BITMAPINFO), wintypes.UINT,

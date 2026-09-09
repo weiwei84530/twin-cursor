@@ -5,6 +5,7 @@ Run with `python -m twincursor` (add --debug for verbose logging).
 Thread layout:
 - main thread:      Interception event loop and mode switching
 - overlay thread:   ghost-cursor layered window and its message pump
+- cursor thread:    system-wide cursor tinting (SetSystemCursor)
 - settings thread:  tkinter settings window
 - tray thread:      pystray icon
 - hotkey thread:    RegisterHotKey message loop
@@ -23,6 +24,7 @@ from .device_names import get_display_names
 from .hotkeys import HotkeyManager
 from .overlay import Overlay
 from .settings_ui import SettingsWindow
+from .system_cursor import SystemCursorTint
 from .tray import Tray
 
 # The vendored interception package opens a driver context at import time
@@ -55,9 +57,20 @@ _AUTO = object()  # slot marker: pick a device automatically
 def _default_slot_settings() -> list[dict]:
     """Factory-fresh slot settings (startup default and Restore Defaults)."""
     return [
-        {"is_mirrored": False, "hotkey": dict(_DEFAULT_HOTKEY_FIRST)},
-        {"is_mirrored": False, "hotkey": None},
+        {
+            "is_mirrored": False,
+            "hotkey": dict(_DEFAULT_HOTKEY_FIRST),
+            "color": None,
+        },
+        {"is_mirrored": False, "hotkey": None, "color": None},
     ]
+
+
+def _rgb(color):
+    """Turn a stored "#rrggbb" colour into an (r, g, b) tuple, or None."""
+    if not color:
+        return None
+    return tuple(int(color[index:index + 2], 16) for index in (1, 3, 5))
 
 
 class App:
@@ -85,6 +98,8 @@ class App:
             self._slot_settings[index]["is_mirrored"] = stored["is_mirrored"]
             if "hotkey" in stored:
                 self._slot_settings[index]["hotkey"] = stored["hotkey"]
+            if "color" in stored:
+                self._slot_settings[index]["color"] = stored["color"]
 
     # -- device list --------------------------------------------------------
 
@@ -137,12 +152,10 @@ class App:
                 if name not in stored:
                     slots.append(_AUTO)
                     continue
-                key = stored[name]
-                if key is not None and key in self._mice and key not in used:
-                    used.add(key)
-                    slots.append(key)
-                else:
-                    slots.append(None)  # explicit None, or device unplugged
+                match = self._match_device(stored[name], used)
+                if match is not None:
+                    used.add(match)
+                slots.append(match)  # None: explicit None, or device unplugged
             for index, key in enumerate(slots):
                 if key is _AUTO:
                     key = next((k for k in self._mice if k not in used), None)
@@ -156,7 +169,45 @@ class App:
                 if free is not None:
                     slots[0] = free
             self._assignment = slots
+            self._remember_assignment(stored)
         self._apply_assignment()
+
+    def _match_device(self, key, used):
+        """Find the present device for a stored selection key.
+
+        Falls back to the bare hardware ID so two identical mice that
+        enumerated in a different order this time still resolve.
+        """
+        if not key:
+            return None
+        if key in self._mice and key not in used:
+            return key
+        base = key.split("#", 1)[0]
+        return next(
+            (k for k in self._mice
+             if k not in used and k.split("#", 1)[0] == base),
+            None,
+        )
+
+    def _remember_assignment(self, stored) -> None:
+        """Persist automatically filled slots so each mouse keeps its slot.
+
+        Without this, a slot filled automatically just follows the driver's
+        enumeration order, which can differ between restarts and swap the
+        two mice around. Slots that ended up empty keep whatever was stored
+        before — an explicit None, or nothing at all, which leaves them on
+        automatic assignment for a mouse plugged in later.
+        """
+        selection = dict(stored)
+        changed = False
+        for index, name in enumerate(("a", "b")):
+            key = self._assignment[index]
+            if key is None or selection.get(name) == key:
+                continue
+            selection[name] = key
+            changed = True
+        if changed:
+            settings.save_selection(selection)
 
     def _apply_assignment(self) -> None:
         with self._lock:
@@ -168,6 +219,7 @@ class App:
                     # The device takes over the mirror state of the slot it
                     # now occupies.
                     device.is_mirrored = self._slot_settings[index]["is_mirrored"]
+                    device.color = _rgb(self._slot_settings[index]["color"])
                     devices.append(device)
                 # A slot's hotkey is only active while it holds a device.
                 hotkeys.append(
@@ -209,6 +261,7 @@ class App:
                     "label": device.label if device else None,
                     "mirrored": bool(self._slot_settings[index]["is_mirrored"]),
                     "hotkey_label": hotkey["label"] if hotkey else None,
+                    "color": self._slot_settings[index]["color"],
                     "hwid": device.hwid if device else "",
                 })
             return {
@@ -239,7 +292,7 @@ class App:
                         return
                 self._assignment[other] = displaced
             self._assignment[slot] = key
-            settings.save_selection(self._assignment)
+            settings.save_selection(dict(zip(("a", "b"), self._assignment)))
         self._apply_assignment()
 
     def on_mirror_toggle(self, slot: int, value: bool) -> None:
@@ -251,6 +304,17 @@ class App:
             device = self._slot_device(slot)
         if device is not None:
             self._router.set_mirrored(device, bool(value))
+
+    def on_color_change(self, slot: int, color) -> None:
+        with self._lock:
+            if not 0 <= slot < len(self._slot_settings):
+                return
+            color = settings.validate_color(color)
+            self._slot_settings[slot]["color"] = color
+            settings.save_slots(self._slot_settings)
+            device = self._slot_device(slot)
+        if device is not None:
+            self._router.set_color(device, _rgb(color))
 
     def on_hotkey_change(self, slot: int, hotkey) -> None:
         with self._lock:
@@ -365,7 +429,8 @@ def main(argv=None) -> int:
         return 1
 
     overlay = Overlay()
-    router = Router(interception, overlay)
+    system_cursor = SystemCursorTint()
+    router = Router(interception, overlay, system_cursor)
     hotkeys = HotkeyManager(lambda hotkey_id: app.on_hotkey_fired(hotkey_id))
     app = App(router, hotkeys)
     app.merge_devices(found)
@@ -376,6 +441,7 @@ def main(argv=None) -> int:
         get_state=app.get_state,
         on_device_selected=app.on_device_selected,
         on_mirror_toggle=app.on_mirror_toggle,
+        on_color_change=app.on_color_change,
         on_hotkey_change=app.on_hotkey_change,
         on_autostart_toggle=app.on_autostart_toggle,
         on_restore_defaults=app.restore_defaults,
@@ -386,6 +452,9 @@ def main(argv=None) -> int:
     tray.start()
 
     try:
+        # Before anything replaces a system cursor, so the pristine ones
+        # can still be snapshotted.
+        system_cursor.start()
         overlay.start()
 
         # The main thread forwards every mouse stroke; keep it responsive.
@@ -399,6 +468,7 @@ def main(argv=None) -> int:
     finally:
         interception.destroy()
         router.restore_system_swap()
+        system_cursor.stop()
         hotkeys.stop()
         tray.stop()
         ui.stop()

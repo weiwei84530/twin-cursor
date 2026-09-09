@@ -17,6 +17,10 @@ In both modes, mice that are present but not assigned to a slot are
 blocked: their strokes are filtered and swallowed, so setting a slot to
 "None" actually disables the leftover mouse instead of letting it drive
 the cursor alongside the assigned one.
+
+Each slot can also carry a colour that tells the two mice apart: the mouse
+driving the real cursor tints the system cursors, the other one tints the
+ghost, and the two colours trade places on every switch.
 """
 
 import logging
@@ -98,6 +102,8 @@ class MouseDevice:
         self.settings_key = settings_key
         self.label = label
         self.is_mirrored = False
+        # Slot colour applied to this mouse's cursor; None = no tint.
+        self.color: tuple[int, int, int] | None = None
         # Remembered cursor position; authoritative only while inactive.
         # Kept as floats so slow ghost movements can accumulate fractions.
         self.x = 0.0
@@ -208,9 +214,10 @@ def connect(wanted_keys=(), timeout: float = 30.0, interval: float = 1.0,
 class Router:
     """Routes strokes between the assigned mice, the OS cursor and the overlay."""
 
-    def __init__(self, interception, overlay):
+    def __init__(self, interception, overlay, system_cursor):
         self._interception = interception
         self._overlay = overlay
+        self._system_cursor = system_cursor
         self._mice: dict[int, MouseDevice] = {}  # routed devices (dual mode)
         self._blocked: dict[int, MouseDevice] = {}  # present but unassigned
         self._active: MouseDevice | None = None
@@ -248,6 +255,17 @@ class Router:
             if mouse is self._single:
                 w.user32.SwapMouseButton(self._baseline_swap != value)
         log.info("%s button mirror: %s", mouse.label, "on" if value else "off")
+
+    def set_color(self, mouse: MouseDevice, color) -> None:
+        """Called from the settings-UI thread; pushes the new slot colour to
+        whichever cursor this mouse currently drives."""
+        with self._control_lock:
+            mouse.color = color
+            if mouse is self._active or mouse is self._single:
+                self._system_cursor.set_color(color)
+            elif mouse.device_num in self._mice:
+                self._overlay.set_color(color)  # this mouse owns the ghost
+        log.info("%s cursor colour: %s", mouse.label, color or "default")
 
     def restore_system_swap(self) -> None:
         """Put the system-wide button swap back the way we found it."""
@@ -331,6 +349,8 @@ class Router:
             self._active = devices[0]
             self._speed_factor = _SPEED_MULTIPLIERS.get(w.get_mouse_speed(), 1.0)
             self._last_active_time = 0.0
+            self._system_cursor.set_color(devices[0].color)
+            self._overlay.set_color(devices[1].color)
             self._overlay.show_at(x, y)
             log.info(
                 "Dual-mouse mode: %s + %s", devices[0].label, devices[1].label
@@ -343,6 +363,7 @@ class Router:
             w.user32.SwapMouseButton(
                 self._baseline_swap != (single.is_mirrored if single else False)
             )
+            self._system_cursor.set_color(single.color if single else None)
             if single is not None:
                 log.info(
                     "Single-mouse mode: %s (input passes through untouched)",
@@ -408,6 +429,10 @@ class Router:
 
         self._active = mouse
         w.user32.SetCursorPos(int(mouse.x), int(mouse.y))
+        # The cursors trade places, so the colours follow them: the real
+        # cursor takes the new mouse's colour, the ghost the old one's.
+        self._system_cursor.set_color(mouse.color)
+        self._overlay.set_color(previous.color)
         self._overlay.move_to(int(previous.x), int(previous.y))
         self._speed_factor = _SPEED_MULTIPLIERS.get(w.get_mouse_speed(), 1.0)
         log.debug(

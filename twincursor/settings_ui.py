@@ -6,8 +6,10 @@ request actions through flags polled by an `after` loop. Closing the window
 only hides it; the application keeps running in the tray.
 
 The window shows two slots (Mouse A / Mouse B), each with a device
-dropdown, a mirror-buttons checkbox and a hotkey recorder, followed by a
-"Start with Windows" checkbox and the Restore Defaults / Exit buttons.
+dropdown, a mirror-buttons checkbox, a colour chip and a hotkey recorder,
+followed by a "Start with Windows" checkbox and the Restore Defaults /
+Exit buttons. The chip opens a small palette popup: the colour it picks
+tints that mouse's cursor, so the two are told apart at a glance.
 State is pulled from the application through `get_state` on every poll
 tick, so changes made from other threads (hotkey toggles, device
 hot-plug) show up without any push mechanism.
@@ -33,6 +35,16 @@ _NONE_LABEL = "None"
 # nearest-neighbour artifacts Tk produces when it scales down itself.
 _ICON_SIZES = (16, 20, 24, 32, 48, 64)
 _RECORDING_TEXT = "Press keys… (Esc = none)"
+
+# Palette offered by the colour popup. The tint keeps each pixel's
+# brightness and only replaces its hue, so saturated colours read best.
+_PALETTE = (
+    "#e53935", "#fb8c00", "#fdd835", "#9ccc65", "#43a047", "#00bfa5",
+    "#00b0ff", "#1e88e5", "#5c6bc0", "#9c27b0", "#ec407a", "#8d6e63",
+)
+_SWATCH = 26  # pixels per palette cell
+_SWATCH_GAP = 6
+_PALETTE_COLUMNS = 6
 
 _MODIFIER_KEYSYMS = {
     "Control_L": w.MOD_CONTROL, "Control_R": w.MOD_CONTROL,
@@ -74,18 +86,19 @@ def _ensure_tcl_env() -> None:
 _ensure_tcl_env()
 
 import tkinter as tk  # noqa: E402  (needs the Tcl environment set up first)
-from tkinter import messagebox, ttk  # noqa: E402
+from tkinter import colorchooser, messagebox, ttk  # noqa: E402
 
 
 class SettingsWindow:
     """Owns the tkinter thread. Public methods are safe from any thread."""
 
     def __init__(self, get_state, on_device_selected, on_mirror_toggle,
-                 on_hotkey_change, on_autostart_toggle, on_restore_defaults,
-                 on_exit, on_shown):
+                 on_color_change, on_hotkey_change, on_autostart_toggle,
+                 on_restore_defaults, on_exit, on_shown):
         self._get_state = get_state
         self._on_device_selected = on_device_selected
         self._on_mirror_toggle = on_mirror_toggle
+        self._on_color_change = on_color_change
         self._on_hotkey_change = on_hotkey_change
         self._on_autostart_toggle = on_autostart_toggle
         self._on_restore_defaults = on_restore_defaults
@@ -148,6 +161,7 @@ class SettingsWindow:
         # this thread. Left to the garbage collector, their finalizers would
         # run on the main thread at interpreter shutdown and crash Tcl
         # ("Tcl_AsyncDelete: async handler deleted by the wrong thread").
+        self._close_color_popup()
         self._slots = None
         self._icon_images = None
         self._autostart_var = None
@@ -180,6 +194,7 @@ class SettingsWindow:
             log.debug("Could not load icon.png for the settings window")
 
         self._recording: int | None = None  # slot index while capturing keys
+        self._color_popup = None
         self._held_mods = 0
         self._last_state = None
         self._slots: list[dict] = []
@@ -199,7 +214,7 @@ class SettingsWindow:
             combo = ttk.Combobox(
                 box, textvariable=device_var, state="readonly", width=36
             )
-            combo.grid(row=0, column=1, columnspan=2, sticky="ew", padx=(6, 0))
+            combo.grid(row=0, column=1, columnspan=3, sticky="ew", padx=(6, 0))
             combo.bind(
                 "<<ComboboxSelected>>",
                 lambda _e, s=slot: self._device_selected(s),
@@ -214,20 +229,32 @@ class SettingsWindow:
             )
             check.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
+            # A colour chip rather than a button: it has to show the colour
+            # it stands for, which no ttk widget does.
+            chip = tk.Canvas(
+                box, width=22, height=22, highlightthickness=1,
+                highlightbackground="#8a8a8a", bd=0, cursor="hand2",
+            )
+            chip.grid(row=1, column=2, sticky="e", padx=(8, 8), pady=(8, 0))
+            chip.bind("<Button-1>", lambda _e, s=slot: self._chip_clicked(s))
+
             hotkey_button = ttk.Button(
                 box, text=f"Hotkey: {_NONE_LABEL.lower()}", width=24,
                 command=lambda s=slot: self._start_recording(s),
             )
-            hotkey_button.grid(row=1, column=2, sticky="e", pady=(8, 0))
+            hotkey_button.grid(row=1, column=3, sticky="e", pady=(8, 0))
 
             hwid_label = ttk.Label(box, text="", foreground="gray")
-            hwid_label.grid(row=2, column=0, columnspan=3, sticky="w", pady=(4, 0))
+            hwid_label.grid(row=2, column=0, columnspan=4, sticky="w", pady=(4, 0))
 
             self._slots.append({
                 "combo": combo,
                 "device_var": device_var,
                 "mirror_var": mirror_var,
                 "check": check,
+                "chip": chip,
+                "color": None,
+                "color_enabled": False,
                 "hotkey_button": hotkey_button,
                 "hwid_label": hwid_label,
                 "keys": [],  # device keys parallel to the dropdown entries
@@ -295,6 +322,9 @@ class SettingsWindow:
             enabled = slot_state["key"] is not None
             for name in ("check", "hotkey_button"):
                 widgets[name].state(["!disabled" if enabled else "disabled"])
+            widgets["color"] = slot_state["color"]
+            widgets["color_enabled"] = enabled
+            _draw_chip(widgets["chip"], slot_state["color"], enabled)
 
     # -- widget callbacks ---------------------------------------------------
 
@@ -312,6 +342,20 @@ class SettingsWindow:
             self._on_device_selected(slot, key)
         except Exception:
             log.exception("Device selection failed")
+        self._refresh(force=True)
+
+    def _chip_clicked(self, slot: int) -> str:
+        if self._slots[slot]["color_enabled"]:
+            self._open_color_popup(slot)
+        return "break"  # the click must not reach the close-on-outside logic
+
+    def _color_picked(self, slot: int, color) -> None:
+        self._close_color_popup()
+        try:
+            self._on_color_change(slot, color)
+        except Exception:
+            log.exception("Colour change failed")
+        self._last_state = None
         self._refresh(force=True)
 
     def _mirror_toggled(self, slot: int) -> None:
@@ -424,6 +468,128 @@ class SettingsWindow:
         for sequence in ("<KeyPress>", "<KeyRelease>", "<FocusOut>"):
             button.unbind(sequence)
 
+    # -- colour popup -------------------------------------------------------
+
+    def _open_color_popup(self, slot: int) -> None:
+        """Drop a small palette below the slot's colour chip.
+
+        It is an undecorated toplevel rather than a dialog: picking a
+        colour is a one-click action, and the cursor changes the instant a
+        swatch is clicked, so the popup closes with it.
+        """
+        self._close_color_popup()
+        chip = self._slots[slot]["chip"]
+        current = self._slots[slot]["color"]
+
+        popup = tk.Toplevel(self._root)
+        self._color_popup = popup
+        popup.withdraw()
+        popup.overrideredirect(True)
+        popup.attributes("-topmost", True)
+
+        outer = ttk.Frame(popup, relief="solid", borderwidth=1)
+        outer.grid(sticky="nsew")
+        body = ttk.Frame(outer, padding=10)
+        body.grid(sticky="nsew")
+        ttk.Label(body, text=f"{_SLOT_TITLES[slot]} cursor colour").grid(
+            row=0, column=0, sticky="w"
+        )
+
+        columns = _PALETTE_COLUMNS
+        rows = -(-len(_PALETTE) // columns)
+        step = _SWATCH + _SWATCH_GAP
+        palette = tk.Canvas(
+            body,
+            width=columns * step - _SWATCH_GAP,
+            height=rows * step - _SWATCH_GAP,
+            highlightthickness=0, bd=0, cursor="hand2",
+            background=ttk.Style().lookup("TFrame", "background") or "SystemButtonFace",
+        )
+        palette.grid(row=1, column=0, pady=(8, 0))
+        for index, color in enumerate(_PALETTE):
+            left = (index % columns) * step
+            top = (index // columns) * step
+            selected = current == color
+            palette.create_rectangle(
+                left, top, left + _SWATCH - 1, top + _SWATCH - 1,
+                fill=color, width=3 if selected else 1,
+                outline="#202020" if selected else "#9a9a9a",
+                tags=(f"swatch{index}", "swatch"),
+            )
+        palette.bind(
+            "<Button-1>",
+            lambda event, s=slot: self._palette_clicked(event, s),
+        )
+
+        buttons = ttk.Frame(body)
+        buttons.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        buttons.columnconfigure(0, weight=1)
+        ttk.Button(
+            buttons, text="System default", width=15,
+            command=lambda s=slot: self._color_picked(s, None),
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Button(
+            buttons, text="Custom…", width=10,
+            command=lambda s=slot: self._pick_custom_color(s),
+        ).grid(row=0, column=1, sticky="e", padx=(8, 0))
+
+        popup.update_idletasks()
+        width = popup.winfo_reqwidth()
+        x = chip.winfo_rootx() + chip.winfo_width() - width
+        y = chip.winfo_rooty() + chip.winfo_height() + 6
+        x = max(4, min(x, popup.winfo_screenwidth() - width - 4))
+        popup.geometry(f"+{x}+{y}")
+        popup.deiconify()
+        popup.focus_force()
+        popup.bind("<Escape>", lambda _e: self._close_color_popup())
+        popup.bind("<FocusOut>", self._popup_focus_out)
+
+    def _popup_focus_out(self, _event) -> None:
+        """Close once the focus lands outside the popup (a click elsewhere)."""
+        popup = self._color_popup
+        if popup is None:
+            return
+        focused = popup.focus_get()
+        if focused is None or not str(focused).startswith(str(popup)):
+            self._close_color_popup()
+
+    def _palette_clicked(self, event, slot: int) -> None:
+        canvas = event.widget
+        for item in canvas.find_overlapping(
+            event.x - 1, event.y - 1, event.x + 1, event.y + 1
+        ):
+            for tag in canvas.gettags(item):
+                if tag.startswith("swatch") and tag != "swatch":
+                    self._color_picked(slot, _PALETTE[int(tag[6:])])
+                    return
+
+    def _pick_custom_color(self, slot: int) -> None:
+        current = self._slots[slot]["color"]
+        self._close_color_popup()
+        try:
+            rgb, _ = colorchooser.askcolor(
+                color=current or "#1e88e5", parent=self._root,
+                title="TwinCursor cursor colour",
+            )
+        except Exception:
+            log.exception("Colour chooser failed")
+            return
+        if rgb:
+            # Build the hex string from the channels: the string the
+            # chooser returns is 16 bits per channel on some platforms.
+            self._color_picked(
+                slot, "#%02x%02x%02x" % tuple(int(c) & 0xFF for c in rgb)
+            )
+
+    def _close_color_popup(self) -> None:
+        popup, self._color_popup = self._color_popup, None
+        if popup is None:
+            return
+        try:
+            popup.destroy()
+        except tk.TclError:
+            pass
+
     # -- window management --------------------------------------------------
 
     @staticmethod
@@ -446,6 +612,22 @@ def _pretty_keysym(keysym: str) -> str:
     if len(keysym) == 1:
         return keysym.upper()
     return _KEYSYM_LABELS.get(keysym, keysym)
+
+
+def _draw_chip(chip, color, enabled: bool) -> None:
+    """Paint the slot's colour chip: the colour itself, or a struck-out
+    square when the cursor is left in its system colours."""
+    chip.delete("all")
+    chip.configure(
+        cursor="hand2" if enabled else "arrow",
+        highlightbackground="#8a8a8a" if enabled else "#c8c8c8",
+    )
+    if color and enabled:
+        chip.create_rectangle(0, 0, 23, 23, fill=color, outline=color)
+        return
+    chip.create_rectangle(0, 0, 23, 23, fill="#f4f4f4", outline="#f4f4f4")
+    chip.create_line(3, 18, 18, 3, fill="#8a8a8a" if enabled else "#cccccc",
+                     width=2)
 
 
 def _shorten(hwid: str, limit: int = 46) -> str:

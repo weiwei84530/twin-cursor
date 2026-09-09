@@ -28,7 +28,7 @@ The ghost cursor uses your actual system cursor (theme, pointer size and per-mon
 
 ## Installation
 
-1. Download the `TwinCursor-v<version>.exe` asset from the [latest release](https://github.com/weiwei84530/TwinCursor/releases/latest) and run it.
+1. Download the `TwinCursor-v<version>.exe` asset from the [latest release](https://github.com/weiwei84530/twin-cursor/releases/latest) and run it.
 2. If the Interception kernel driver is not installed yet, TwinCursor offers to install the bundled official installer (Windows asks for administrator approval). Restart the computer when prompted, then launch TwinCursor again.
 3. The app starts minimized to the system tray.
 

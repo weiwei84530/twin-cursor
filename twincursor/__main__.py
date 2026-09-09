@@ -23,7 +23,7 @@ from . import winapi as w
 from .device_names import get_display_names
 from .hotkeys import HotkeyManager
 from .overlay import Overlay
-from .settings_ui import SettingsWindow
+from .settings_ui import PALETTE_COLUMNS, SettingsWindow
 from .system_cursor import SystemCursorTint
 from .tray import Tray
 
@@ -90,6 +90,9 @@ class App:
         # whatever device occupies a slot inherits that slot's settings.
         self._slot_settings: list[dict] = _default_slot_settings()
         self._autostart = autostart.is_enabled()
+        # Colours picked with the custom chooser, most recent first, shared
+        # by both slots. One row of the popup's palette holds them all.
+        self._recent_colors = settings.load_recent_colors()[:PALETTE_COLUMNS]
         stored_slots = settings.load_slots()
         for index, name in enumerate(("a", "b")):
             stored = stored_slots.get(name)
@@ -268,6 +271,7 @@ class App:
                 "devices": devices,
                 "slots": slots,
                 "autostart": self._autostart,
+                "recent_colors": list(self._recent_colors),
             }
 
     # -- callbacks (settings / hotkey / router threads) ---------------------
@@ -305,13 +309,19 @@ class App:
         if device is not None:
             self._router.set_mirrored(device, bool(value))
 
-    def on_color_change(self, slot: int, color) -> None:
+    def on_color_change(self, slot: int, color, remember: bool = False) -> None:
+        """Give a slot a colour. `remember` adds it to the recent list (the
+        custom chooser); palette colours are already on display."""
         with self._lock:
             if not 0 <= slot < len(self._slot_settings):
                 return
             color = settings.validate_color(color)
             self._slot_settings[slot]["color"] = color
             settings.save_slots(self._slot_settings)
+            if remember and color is not None:
+                recent = [c for c in self._recent_colors if c != color]
+                self._recent_colors = [color, *recent][:PALETTE_COLUMNS]
+                settings.save_recent_colors(self._recent_colors)
             device = self._slot_device(slot)
         if device is not None:
             self._router.set_color(device, _rgb(color))
@@ -339,8 +349,10 @@ class App:
         with self._lock:
             self._slot_settings = _default_slot_settings()
             self._autostart = autostart.is_enabled()
+            self._recent_colors = []
             settings.save_slots(self._slot_settings)
             settings.clear_selection()
+            settings.clear_recent_colors()
         # Re-runs the automatic slot assignment and pushes the fresh mirror
         # state and hotkeys to the router and the hotkey manager.
         self.resolve_initial_assignment()

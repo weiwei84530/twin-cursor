@@ -10,6 +10,9 @@ Settings are stored as JSON strings under HKCU\\SOFTWARE\\TwinCursor:
 - "DeviceSelection": {"a": <hwid key>|null, "b": <hwid key>|null}. A slot
   missing from the dict means "assign automatically"; null means the user
   explicitly chose no device.
+- "RecentColors": the colours picked with the custom colour chooser, most
+  recent first, offered again in the colour popup. Not per slot: the two
+  slots share one list.
 
 Versions up to 1.0 stored per-device settings keyed by hardware ID in
 "MirrorSettings"; on first load those are migrated to slot settings using
@@ -27,11 +30,22 @@ _KEY_PATH = r"SOFTWARE\TwinCursor"
 _SLOT_VALUE = "SlotSettings"
 _SELECTION_VALUE = "DeviceSelection"
 _LEGACY_MIRROR_VALUE = "MirrorSettings"
+_RECENT_COLORS_VALUE = "RecentColors"
 _SLOT_NAMES = ("a", "b")
 _COLOR_PATTERN = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
+def _read_list(value_name: str):
+    data = _read_json_value(value_name)
+    return data if isinstance(data, list) else None
+
+
 def _read_json(value_name: str):
+    data = _read_json_value(value_name)
+    return data if isinstance(data, dict) else None
+
+
+def _read_json_value(value_name: str):
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _KEY_PATH) as key:
             raw, _ = winreg.QueryValueEx(key, value_name)
@@ -42,10 +56,10 @@ def _read_json(value_name: str):
     except (OSError, ValueError) as exc:
         log.warning("Failed to load %s: %s", value_name, exc)
         return None
-    return data if isinstance(data, dict) else None
+    return data
 
 
-def _write_json(value_name: str, data: dict) -> None:
+def _write_json(value_name: str, data) -> None:
     try:
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _KEY_PATH) as key:
             winreg.SetValueEx(
@@ -185,3 +199,24 @@ def save_selection(selection) -> None:
 def clear_selection() -> None:
     """Forget the stored assignment, so both slots are filled automatically."""
     _delete_value(_SELECTION_VALUE)
+
+
+def load_recent_colors() -> list:
+    """Return the stored custom colours, most recent first."""
+    data = _read_list(_RECENT_COLORS_VALUE)
+    if not data:
+        return []
+    colors = []
+    for value in data:
+        color = validate_color(value)
+        if color is not None and color not in colors:
+            colors.append(color)
+    return colors
+
+
+def save_recent_colors(colors) -> None:
+    _write_json(_RECENT_COLORS_VALUE, list(colors))
+
+
+def clear_recent_colors() -> None:
+    _delete_value(_RECENT_COLORS_VALUE)

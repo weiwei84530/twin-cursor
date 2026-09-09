@@ -9,7 +9,9 @@ The window shows two slots (Mouse A / Mouse B), each with a device
 dropdown, a mirror-buttons checkbox, a colour chip and a hotkey recorder,
 followed by a "Start with Windows" checkbox and the Restore Defaults /
 Exit buttons. The chip opens a small palette popup: the colour it picks
-tints that mouse's cursor, so the two are told apart at a glance.
+tints that mouse's cursor, so the two are told apart at a glance. Colours
+mixed in the custom chooser come back as a "Recent" row under the
+palette.
 State is pulled from the application through `get_state` on every poll
 tick, so changes made from other threads (hotkey toggles, device
 hot-plug) show up without any push mechanism.
@@ -44,7 +46,7 @@ _PALETTE = (
 )
 _SWATCH = 26  # pixels per palette cell
 _SWATCH_GAP = 6
-_PALETTE_COLUMNS = 6
+PALETTE_COLUMNS = 6
 
 _MODIFIER_KEYSYMS = {
     "Control_L": w.MOD_CONTROL, "Control_R": w.MOD_CONTROL,
@@ -195,6 +197,7 @@ class SettingsWindow:
 
         self._recording: int | None = None  # slot index while capturing keys
         self._color_popup = None
+        self._recent_colors: list[str] = []
         self._held_mods = 0
         self._last_state = None
         self._slots: list[dict] = []
@@ -300,6 +303,7 @@ class SettingsWindow:
         self._last_state = state
 
         self._autostart_var.set(state["autostart"])
+        self._recent_colors = list(state["recent_colors"])
         keys = [key for key, _ in state["devices"]]
         labels = [label for _, label in state["devices"]]
         for slot, slot_state in enumerate(state["slots"]):
@@ -349,10 +353,10 @@ class SettingsWindow:
             self._open_color_popup(slot)
         return "break"  # the click must not reach the close-on-outside logic
 
-    def _color_picked(self, slot: int, color) -> None:
+    def _color_picked(self, slot: int, color, remember: bool = False) -> None:
         self._close_color_popup()
         try:
-            self._on_color_change(slot, color)
+            self._on_color_change(slot, color, remember)
         except Exception:
             log.exception("Colour change failed")
         self._last_state = None
@@ -495,34 +499,24 @@ class SettingsWindow:
             row=0, column=0, sticky="w"
         )
 
-        columns = _PALETTE_COLUMNS
-        rows = -(-len(_PALETTE) // columns)
-        step = _SWATCH + _SWATCH_GAP
-        palette = tk.Canvas(
-            body,
-            width=columns * step - _SWATCH_GAP,
-            height=rows * step - _SWATCH_GAP,
-            highlightthickness=0, bd=0, cursor="hand2",
-            background=ttk.Style().lookup("TFrame", "background") or "SystemButtonFace",
-        )
-        palette.grid(row=1, column=0, pady=(8, 0))
-        for index, color in enumerate(_PALETTE):
-            left = (index % columns) * step
-            top = (index // columns) * step
-            selected = current == color
-            palette.create_rectangle(
-                left, top, left + _SWATCH - 1, top + _SWATCH - 1,
-                fill=color, width=3 if selected else 1,
-                outline="#202020" if selected else "#9a9a9a",
-                tags=(f"swatch{index}", "swatch"),
+        self._build_swatches(body, 1, slot, _PALETTE, current)
+
+        # Colours from the custom chooser get their own row, so a colour
+        # that is not on the palette can be picked again without mixing it
+        # a second time. The row holds one palette width of them.
+        recent = [color for color in self._recent_colors if color not in _PALETTE]
+        row = 2
+        if recent:
+            ttk.Label(body, text="Recent", foreground="gray").grid(
+                row=2, column=0, sticky="w", pady=(8, 0)
             )
-        palette.bind(
-            "<Button-1>",
-            lambda event, s=slot: self._palette_clicked(event, s),
-        )
+            self._build_swatches(
+                body, 3, slot, recent[:PALETTE_COLUMNS], current, pady=(4, 0)
+            )
+            row = 4
 
         buttons = ttk.Frame(body)
-        buttons.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        buttons.grid(row=row, column=0, sticky="ew", pady=(10, 0))
         buttons.columnconfigure(0, weight=1)
         ttk.Button(
             buttons, text="System default", width=15,
@@ -553,14 +547,47 @@ class SettingsWindow:
         if focused is None or not str(focused).startswith(str(popup)):
             self._close_color_popup()
 
-    def _palette_clicked(self, event, slot: int) -> None:
+    def _build_swatches(self, body, row: int, slot: int, colors, current,
+                        pady=(8, 0)):
+        """Grid `colors` into a canvas of clickable swatches."""
+        step = _SWATCH + _SWATCH_GAP
+        rows = -(-len(colors) // PALETTE_COLUMNS)
+        canvas = tk.Canvas(
+            body,
+            width=PALETTE_COLUMNS * step - _SWATCH_GAP,
+            height=rows * step - _SWATCH_GAP,
+            highlightthickness=0, bd=0, cursor="hand2",
+            background=(
+                ttk.Style().lookup("TFrame", "background") or "SystemButtonFace"
+            ),
+        )
+        canvas.grid(row=row, column=0, sticky="w", pady=pady)
+        for index, color in enumerate(colors):
+            left = (index % PALETTE_COLUMNS) * step
+            top = (index // PALETTE_COLUMNS) * step
+            selected = current == color
+            canvas.create_rectangle(
+                left, top, left + _SWATCH - 1, top + _SWATCH - 1,
+                fill=color, width=3 if selected else 1,
+                outline="#202020" if selected else "#9a9a9a",
+                tags=(f"swatch{index}", "swatch"),
+            )
+        canvas.bind(
+            "<Button-1>",
+            lambda event, s=slot, c=list(colors): self._swatch_clicked(event, s, c),
+        )
+        return canvas
+
+    def _swatch_clicked(self, event, slot: int, colors) -> None:
         canvas = event.widget
         for item in canvas.find_overlapping(
             event.x - 1, event.y - 1, event.x + 1, event.y + 1
         ):
             for tag in canvas.gettags(item):
                 if tag.startswith("swatch") and tag != "swatch":
-                    self._color_picked(slot, _PALETTE[int(tag[6:])])
+                    index = int(tag[6:])
+                    if index < len(colors):
+                        self._color_picked(slot, colors[index])
                     return
 
     def _pick_custom_color(self, slot: int) -> None:
@@ -578,7 +605,8 @@ class SettingsWindow:
             # Build the hex string from the channels: the string the
             # chooser returns is 16 bits per channel on some platforms.
             self._color_picked(
-                slot, "#%02x%02x%02x" % tuple(int(c) & 0xFF for c in rgb)
+                slot, "#%02x%02x%02x" % tuple(int(c) & 0xFF for c in rgb),
+                remember=True,
             )
 
     def _close_color_popup(self) -> None:

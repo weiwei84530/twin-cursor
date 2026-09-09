@@ -157,7 +157,14 @@ def create_dib(size: int):
 
 
 def render_premultiplied(hcursor, size: int):
-    """Return the cursor as premultiplied BGRA, or None if it came out empty."""
+    """Read a cursor's pixels.
+
+    Returns (premultiplied BGRA, inverting pixel count). The pixels are
+    None when the cursor came out empty. Inverting pixels are the ones a
+    classic XOR cursor draws by flipping the background instead of
+    painting a colour of its own; they cannot be reproduced as a bitmap,
+    so callers that rebuild the cursor should leave such cursors alone.
+    """
     black_dc, black_bmp, black_bits = create_dib(size)
     white_dc, white_bmp, white_bits = create_dib(size)
     byte_count = size * size * 4
@@ -175,7 +182,7 @@ def render_premultiplied(hcursor, size: int):
         )
         w.gdi32.GdiFlush()
         if not drew:
-            return None
+            return None, 0
         return _recover_alpha(
             ctypes.string_at(black_bits, byte_count),
             ctypes.string_at(white_bits, byte_count),
@@ -188,15 +195,25 @@ def render_premultiplied(hcursor, size: int):
 
 
 def _recover_alpha(black: bytes, white: bytes):
-    """Combine black/white renders into premultiplied BGRA, or None if empty."""
+    """Combine black/white renders into (premultiplied BGRA, inverting count).
+
+    Every pixel a cursor actually paints is at least as bright over a white
+    background as over a black one. A pixel that came out *darker* over
+    white is one the cursor inverted, and inverting pixels are recovered as
+    plain opaque white here, so they are counted for the caller to act on.
+    """
     out = bytearray(len(black))
     opaque = False
+    inverting = 0
     for i in range(0, len(black), 4):
         b, g, r = black[i], black[i + 1], black[i + 2]
         # Alpha from the white render: white_channel = color + (255 - a)
         a = 255 - min(
             max(white[i] - b, 0), max(white[i + 1] - g, 0), max(white[i + 2] - r, 0)
         )
+        # The tolerance keeps antialiasing rounding from counting as one.
+        if (white[i] + 8 < b or white[i + 1] + 8 < g or white[i + 2] + 8 < r):
+            inverting += 1
         if a <= 0:
             continue
         opaque = True
@@ -204,7 +221,7 @@ def _recover_alpha(black: bytes, white: bytes):
         out[i + 1] = min(g, a)
         out[i + 2] = min(r, a)
         out[i + 3] = a
-    return out if opaque else None
+    return (out if opaque else None), inverting
 
 
 def tint(pixels: bytearray, color: tuple[int, int, int]) -> None:

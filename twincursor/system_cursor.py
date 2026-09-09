@@ -121,17 +121,25 @@ class SystemCursorTint:
 
 
 def _build_tinted(ocr_id: int, size: int, color):
-    """Build a tinted copy of one system cursor, or None if it cannot be read."""
+    """Build a tinted copy of one system cursor, or None to leave it alone."""
     source, shared = cursor_render.load_cursor(ocr_id, size)
     if not source:
         return None
     try:
         hotspot = cursor_render.get_hotspot(source)
-        pixels = cursor_render.render_premultiplied(source, size)
+        pixels, inverting = cursor_render.render_premultiplied(source, size)
     finally:
         if not shared:
             w.user32.DestroyCursor(source)
     if pixels is None:
+        return None
+    if inverting:
+        # The I-beam and the crosshair are XOR cursors: they invert the
+        # pixels behind them, which is what keeps them readable on any
+        # background. A bitmap cannot do that, so any replacement would
+        # lose the contrast that makes them visible (a light tint over a
+        # light background disappears). Leave them as Windows drew them.
+        log.debug("Leaving inverting cursor %d untinted", ocr_id)
         return None
     cursor_render.tint(pixels, color)
     return _create_cursor(cursor_render.unpremultiply(pixels), size, hotspot)

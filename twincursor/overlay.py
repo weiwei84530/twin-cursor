@@ -49,7 +49,7 @@ class _CursorBitmap:
         hcursor, shared = cursor_render.load_arrow(size)
         if hcursor:
             self.hotspot = cursor_render.get_hotspot(hcursor)
-            pixels = cursor_render.render_premultiplied(hcursor, size)
+            pixels, _ = cursor_render.render_premultiplied(hcursor, size)
             if not shared:
                 w.user32.DestroyCursor(hcursor)
         if pixels is None:
